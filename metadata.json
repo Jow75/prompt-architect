@@ -1,0 +1,6 @@
+{
+  "name": "Prompt Architect",
+  "description": "A clean AI image-prompt builder. Fill in a few fields to assemble a polished, copy-ready prompt, enhance it with AI, and generate a preview image — ready to use here or in any AI art tool.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

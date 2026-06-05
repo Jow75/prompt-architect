@@ -1,0 +1,38 @@
+[build]
+  # Vite builds the static SPA into dist/. The Express server (server.ts) is NOT
+  # used on Netlify — the /api/* routes are served by the functions below.
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  # Bundle functions (and their node_modules, e.g. @google/genai) with esbuild.
+  node_bundler = "esbuild"
+
+[functions."generate-image"]
+  # Image generation is the slow path. Raise the timeout toward the plan maximum.
+  # Free/Starter is capped at 10s regardless; paid plans honor up to 26s.
+  timeout = 26
+
+# --- Routing (evaluated top to bottom; first match wins) ---
+
+# Map the app's /api/* calls to the serverless functions. status=200 is a
+# rewrite (URL stays /api/...). These MUST come before the SPA catch-all.
+[[redirects]]
+  from = "/api/generate-description"
+  to = "/.netlify/functions/generate-description"
+  status = 200
+
+[[redirects]]
+  from = "/api/generate-image"
+  to = "/.netlify/functions/generate-image"
+  status = 200
+
+# SPA fallback: everything else serves index.html so client-side routing works.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

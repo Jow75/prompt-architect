@@ -1,0 +1,52 @@
+/* Global base styles. Tailwind utilities come from the CDN <script> in index.html. */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #020617; /* slate-950 */
+}
+
+/* Soft ambient glow behind the app for depth. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 50% -10%, rgba(124, 58, 237, 0.18), transparent 60%),
+    radial-gradient(50rem 30rem at 110% 10%, rgba(56, 189, 248, 0.08), transparent 55%);
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Slim, themed scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #334155;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #475569;
+}
+
+/* Make range slider/accent feel consistent. */
+input[type="range"] {
+  accent-color: #8b5cf6;
+}
