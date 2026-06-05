@@ -88,7 +88,14 @@ export async function handleGenerateDescription(input: {
     const nvidiaChatModel =
       requestedModel && requestedModel !== "auto" ? requestedModel : "meta/llama-3.1-8b-instruct";
 
-    const systemInstruction = `You are an expert AI art prompt engineer. The user gives you their own image prompt. Polish it into a single, cohesive, vivid paragraph that an AI image generator will render well — clarifying wording and enriching visual detail (composition, lighting, mood, color, texture). CRITICAL: preserve the user's exact subject, concept, and intent. Do NOT invent a different scene, add new characters/objects, or change what they asked for — only refine and enrich what is already there. Keep it tasteful and safe-for-work. Output ONLY the improved prompt text, with no preamble, labels, or surrounding quotation marks.`;
+    const systemInstruction = `You are a world-class AI image-prompt engineer. Turn the user's input into ONE polished, production-quality image-generation prompt that yields a stunning result.
+
+Rules:
+- PRESERVE the user's core subject, concept and intent. Never replace their idea or add unrelated subjects.
+- Enrich it with concrete visual detail across: composition & framing, subject specifics, setting/background, lighting, color palette, mood/atmosphere, art style or medium, and camera/lens or render quality.
+- Write vivid, specific, descriptive language that image models respond to; front-load the most important elements; prefer concise comma-separated phrases over long sentences.
+- Keep it tasteful and safe-for-work.
+- Output ONLY the final prompt text — no preamble, no labels, no quotes, no explanations.`;
 
     const openAIKey = process.env.OPENAI_API_KEY?.trim();
     const nvidiaKey = process.env.NVIDIA_API_KEY?.trim();

@@ -19,8 +19,8 @@ const TEXT_MODELS = [
     { id: 'auto', label: 'Auto (recommended)' },
     { id: 'meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B (fast)' },
     { id: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B (best)' },
-    { id: 'nvidia/llama-3.1-nemotron-70b-instruct', label: 'Nemotron 70B' },
-    { id: 'mistralai/mistral-7b-instruct-v0.3', label: 'Mistral 7B' },
+    { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
+    { id: 'qwen/qwen3-next-80b-a3b-instruct', label: 'Qwen3 80B' },
 ];
 
 const IMAGE_MODELS = [
@@ -35,8 +35,8 @@ const MODEL_BADGE: Record<string, string> = {
     'flux.1-dev': 'FLUX.1 Dev',
     'meta/llama-3.1-8b-instruct': 'Llama 3.1 8B',
     'meta/llama-3.3-70b-instruct': 'Llama 3.3 70B',
-    'nvidia/llama-3.1-nemotron-70b-instruct': 'Nemotron 70B',
-    'mistralai/mistral-7b-instruct-v0.3': 'Mistral 7B',
+    'openai/gpt-oss-120b': 'GPT-OSS 120B',
+    'qwen/qwen3-next-80b-a3b-instruct': 'Qwen3 80B',
 };
 const badge = (id: string) => MODEL_BADGE[id] || (id && id !== 'auto' ? id : '');
 
@@ -245,6 +245,7 @@ const App: React.FC = () => {
                             isLoading={isLoading}
                             error={error}
                             activeProvider={badge(activeTextModel)}
+                            onClear={() => { setDescription(''); setError(null); setActiveTextModel(''); }}
                         />
                         <GeneratedImageDisplay
                             image={generatedImage}

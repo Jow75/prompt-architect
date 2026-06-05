@@ -6,6 +6,7 @@ interface ImageDescriptionDisplayProps {
     isLoading: boolean;
     error: string | null;
     activeProvider?: string;
+    onClear?: () => void;
 }
 
 const LoadingSkeleton: React.FC = () => (
@@ -17,7 +18,7 @@ const LoadingSkeleton: React.FC = () => (
     </div>
 );
 
-export const ImageDescriptionDisplay: React.FC<ImageDescriptionDisplayProps> = ({ description, isLoading, error, activeProvider }) => {
+export const ImageDescriptionDisplay: React.FC<ImageDescriptionDisplayProps> = ({ description, isLoading, error, activeProvider, onClear }) => {
     const [copied, setCopied] = useState(false);
     const handleCopy = () => {
         navigator.clipboard.writeText(description);
@@ -43,6 +44,15 @@ export const ImageDescriptionDisplay: React.FC<ImageDescriptionDisplayProps> = (
                         >
                             {copied ? <CheckIcon /> : <CopyIcon />}
                             {copied ? 'Copied' : 'Copy'}
+                        </button>
+                    )}
+                    {(description || error) && !isLoading && onClear && (
+                        <button
+                            onClick={onClear}
+                            className="inline-flex items-center rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-white/10"
+                            aria-label="Clear enhanced prompt"
+                        >
+                            Clear
                         </button>
                     )}
                 </div>
