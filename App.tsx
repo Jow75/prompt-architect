@@ -85,6 +85,9 @@ const App: React.FC = () => {
     const [isImageLoading, setIsImageLoading] = useState<boolean>(false);
     const [imageError, setImageError] = useState<string | null>(null);
 
+    const [editImage, setEditImage] = useState<string | null>(null);
+    const [editInstruction, setEditInstruction] = useState<string>('');
+
     const handleInputChange = useCallback((field: keyof PromptData, value: string) => {
         setPromptData(prev => ({ ...prev, [field]: value }));
     }, []);
@@ -143,6 +146,30 @@ const App: React.FC = () => {
             setImageError(err instanceof Error ? err.message : 'An unknown error occurred.');
         } finally {
             setIsImageLoading(false);
+        }
+    };
+
+    const handleFile = (file?: File) => {
+        if (!file || !file.type.startsWith('image/')) return;
+        const reader = new FileReader();
+        reader.onload = () => setEditImage(reader.result as string);
+        reader.readAsDataURL(file);
+    };
+
+    const handleGenerateEditPrompt = async () => {
+        if (!editInstruction.trim()) return;
+        setIsLoading(true);
+        setError(null);
+        setDescription('');
+        setActiveTextModel('');
+        try {
+            const result = await generateVividDescription(editInstruction, textModel, 'edit');
+            setDescription(result.description);
+            setActiveTextModel(result.model || textModel);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -246,6 +273,48 @@ const App: React.FC = () => {
                                 <p className="rounded-lg border border-white/5 bg-slate-950/50 p-2.5 text-[11px] leading-relaxed text-slate-500">
                                     Whatever model you pick is the exact one used. <span className="text-slate-400">Auto</span> picks a fast,
                                     reliable default for you.
+                                </p>
+                            </div>
+                        </PromptInputSection>
+
+                        <PromptInputSection title="Edit a Photo">
+                            <div className="flex flex-col gap-3">
+                                {editImage ? (
+                                    <div className="relative">
+                                        <img src={editImage} alt="reference" className="max-h-52 w-full rounded-xl border border-white/10 bg-slate-950/60 object-contain" />
+                                        <button
+                                            onClick={() => setEditImage(null)}
+                                            className="absolute right-2 top-2 rounded-lg border border-white/10 bg-slate-900/80 px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-slate-800"
+                                        >
+                                            Remove
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-slate-950/40 px-4 py-6 text-center text-sm text-slate-400 transition hover:border-violet-500/40 hover:bg-slate-950/60">
+                                        <ImageIcon />
+                                        <span>Click to upload a reference photo</span>
+                                        <span className="text-[11px] text-slate-500">Stays in your browser — used as your reference</span>
+                                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
+                                    </label>
+                                )}
+                                <textarea
+                                    value={editInstruction}
+                                    onChange={(e) => setEditInstruction(e.target.value)}
+                                    placeholder="Describe the edit  ·  e.g. turn this into a 3D Pixar-anime character, keep the likeness"
+                                    rows={2}
+                                    className={fieldClass}
+                                />
+                                <button
+                                    onClick={handleGenerateEditPrompt}
+                                    disabled={!editInstruction.trim() || isLoading || isImageLoading}
+                                    className="flex items-center justify-center gap-2 rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                    <GenerateIcon />
+                                    {isLoading ? 'Generating…' : 'Generate editing prompt'}
+                                </button>
+                                <p className="text-[11px] leading-relaxed text-slate-500">
+                                    Produces a ready-to-paste editing prompt (shown on the right). Use it together with your photo in any image
+                                    editor that supports edits.
                                 </p>
                             </div>
                         </PromptInputSection>

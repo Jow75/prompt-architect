@@ -77,9 +77,10 @@ export async function handleGenerateDescription(input: {
   prompt?: string;
   provider?: string;
   model?: string;
+  task?: string;
 }): Promise<HandlerResult> {
   try {
-    const { prompt, provider = "auto", model: requestedModel = "auto" } = input;
+    const { prompt, provider = "auto", model: requestedModel = "auto", task = "generate" } = input;
     if (!prompt) {
       return { status: 400, body: { error: "No prompt provided" } };
     }
@@ -88,7 +89,7 @@ export async function handleGenerateDescription(input: {
     const nvidiaChatModel =
       requestedModel && requestedModel !== "auto" ? requestedModel : "meta/llama-3.1-8b-instruct";
 
-    const systemInstruction = `You are a world-class AI image-prompt engineer (a senior concept artist + prompt specialist). The user gives you an idea, a photo description, or a partial prompt. Produce a complete, professional, ready-to-use prompt package.
+    const generateInstruction = `You are a world-class AI image-prompt engineer (a senior concept artist + prompt specialist). The user gives you an idea, a photo description, or a partial prompt. Produce a complete, professional, ready-to-use prompt package.
 
 PRESERVE the user's core subject, concept and intent — never replace their idea or add unrelated subjects.
 
@@ -104,6 +105,25 @@ TIPS:
 - <2 to 4 short, practical tips for getting the best result from this prompt.>
 
 Do not add any other text, preamble, or explanation outside these three sections.`;
+
+    const editInstruction = `You are a world-class photo-editing prompt engineer. The user wants to transform an EXISTING reference photo. Produce a complete, professional editing prompt package.
+
+By DEFAULT preserve the subject's identity — the same face and facial features, hairstyle, body proportions, skin tone, pose, and background — and change ONLY what the user's instruction asks for. Apply exactly the transformation they describe.
+
+Output EXACTLY these labeled sections, in plain text. Do NOT use markdown symbols like #, *, or backticks.
+
+PROMPT:
+<One polished, ready-to-paste editing prompt directed at an image editor/model. Refer to "the provided photo". Clearly state the transformation, what to preserve (identity and key features), the target style, lighting, level of detail, and output quality. Be specific. Keep it tasteful and safe-for-work.>
+
+NEGATIVE PROMPT:
+<A concise comma-separated list of things to avoid, e.g. different person, altered identity, distorted face, extra limbs, watermark, text.>
+
+TIPS:
+- <2 to 4 short, practical tips for a faithful edited result.>
+
+Do not add any other text, preamble, or explanation outside these three sections.`;
+
+    const systemInstruction = task === "edit" ? editInstruction : generateInstruction;
 
     const openAIKey = process.env.OPENAI_API_KEY?.trim();
     const nvidiaKey = process.env.NVIDIA_API_KEY?.trim();

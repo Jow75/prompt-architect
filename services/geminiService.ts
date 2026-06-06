@@ -5,12 +5,13 @@
 export async function generateVividDescription(
     prompt: string,
     model: string = "auto",
+    task: "generate" | "edit" = "generate",
 ): Promise<{ description: string; provider: string; model: string }> {
     try {
         const response = await fetch("/api/generate-description", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, provider: "nvidia", model }),
+            body: JSON.stringify({ prompt, provider: "nvidia", model, task }),
         });
 
         if (!response.ok) {
