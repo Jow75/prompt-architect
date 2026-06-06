@@ -80,7 +80,8 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
-    const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+    const [numImages, setNumImages] = useState<number>(1);
+    const [generatedImages, setGeneratedImages] = useState<string[]>([]);
     const [isImageLoading, setIsImageLoading] = useState<boolean>(false);
     const [imageError, setImageError] = useState<string | null>(null);
 
@@ -123,12 +124,21 @@ const App: React.FC = () => {
     const handleGenerateImage = async () => {
         setIsImageLoading(true);
         setImageError(null);
-        setGeneratedImage(null);
+        setGeneratedImages([]);
         setActiveImageModel('');
         try {
-            const { image, model } = await generateImage(generatedPrompt, imageModel, aspectRatio);
-            setGeneratedImage(image);
-            setActiveImageModel(model || imageModel);
+            // Each image is a separate request (distinct seed) so multiple never hit the timeout.
+            const requests = Array.from({ length: numImages }, () =>
+                generateImage(generatedPrompt, imageModel, aspectRatio, Math.floor(Math.random() * 1_000_000_000)),
+            );
+            const results = await Promise.allSettled(requests);
+            const ok = results.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
+            if (ok.length === 0) {
+                const firstErr = results.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+                throw firstErr?.reason instanceof Error ? firstErr.reason : new Error('Image generation failed.');
+            }
+            setGeneratedImages(ok.map(v => v.image));
+            setActiveImageModel(ok[0].model || imageModel);
         } catch (err) {
             setImageError(err instanceof Error ? err.message : 'An unknown error occurred.');
         } finally {
@@ -224,6 +234,15 @@ const App: React.FC = () => {
                                         {ASPECT_RATIOS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                                     </select>
                                 </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-medium text-slate-500">Number of images</label>
+                                    <select value={numImages} onChange={(e) => setNumImages(Number(e.target.value))} className={selectClass}>
+                                        <option value={1}>1 image</option>
+                                        <option value={2}>2 variations</option>
+                                        <option value={3}>3 variations</option>
+                                        <option value={4}>4 variations</option>
+                                    </select>
+                                </div>
                                 <p className="rounded-lg border border-white/5 bg-slate-950/50 p-2.5 text-[11px] leading-relaxed text-slate-500">
                                     Whatever model you pick is the exact one used. <span className="text-slate-400">Auto</span> picks a fast,
                                     reliable default for you.
@@ -263,7 +282,8 @@ const App: React.FC = () => {
                             onClear={() => { setDescription(''); setError(null); setActiveTextModel(''); }}
                         />
                         <GeneratedImageDisplay
-                            image={generatedImage}
+                            images={generatedImages}
+                            count={numImages}
                             isLoading={isImageLoading}
                             error={imageError}
                             activeProvider={badge(activeImageModel)}

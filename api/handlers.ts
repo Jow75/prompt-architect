@@ -266,9 +266,10 @@ export async function handleGenerateImage(input: {
   provider?: string;
   model?: string;
   aspectRatio?: string;
+  seed?: number;
 }): Promise<HandlerResult> {
   try {
-    const { prompt, provider = "auto", model: requestedModel = "auto", aspectRatio = "1:1" } = input;
+    const { prompt, provider = "auto", model: requestedModel = "auto", aspectRatio = "1:1", seed } = input;
     const [imgWidth, imgHeight] = ASPECT_DIMS[aspectRatio] || ASPECT_DIMS["1:1"];
     if (!prompt) {
       return { status: 400, body: { error: "No prompt provided" } };
@@ -438,6 +439,7 @@ export async function handleGenerateImage(input: {
                 width: imgWidth,
                 height: imgHeight,
                 steps: isSchnell ? 4 : devSteps,
+                ...(typeof seed === "number" ? { seed } : {}),
               }),
             });
           };

@@ -34,12 +34,13 @@ export async function generateImage(
     prompt: string,
     model: string = "auto",
     aspectRatio: string = "1:1",
+    seed?: number,
 ): Promise<{ image: string; sanitizedPrompt: string; provider: string; model: string }> {
     try {
         const response = await fetch("/api/generate-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, provider: "nvidia", model, aspectRatio }),
+            body: JSON.stringify({ prompt, provider: "nvidia", model, aspectRatio, seed }),
         });
 
         if (!response.ok) {
