@@ -33,12 +33,13 @@ export async function generateVividDescription(
 export async function generateImage(
     prompt: string,
     model: string = "auto",
+    aspectRatio: string = "1:1",
 ): Promise<{ image: string; sanitizedPrompt: string; provider: string; model: string }> {
     try {
         const response = await fetch("/api/generate-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, provider: "nvidia", model }),
+            body: JSON.stringify({ prompt, provider: "nvidia", model, aspectRatio }),
         });
 
         if (!response.ok) {

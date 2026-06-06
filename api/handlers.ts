@@ -252,13 +252,24 @@ Do not add any other text, preamble, or explanation outside these three sections
 // ---------------------------------------------------------------------------
 // 2. Image generation with sanitization & multi-provider fallback
 // ---------------------------------------------------------------------------
+// FLUX-accepted dimensions per aspect ratio (all verified working on this account).
+const ASPECT_DIMS: Record<string, [number, number]> = {
+  "1:1": [1024, 1024],
+  "16:9": [1344, 768],
+  "9:16": [768, 1344],
+  "3:2": [1216, 832],
+  "3:4": [896, 1152],
+};
+
 export async function handleGenerateImage(input: {
   prompt?: string;
   provider?: string;
   model?: string;
+  aspectRatio?: string;
 }): Promise<HandlerResult> {
   try {
-    const { prompt, provider = "auto", model: requestedModel = "auto" } = input;
+    const { prompt, provider = "auto", model: requestedModel = "auto", aspectRatio = "1:1" } = input;
+    const [imgWidth, imgHeight] = ASPECT_DIMS[aspectRatio] || ASPECT_DIMS["1:1"];
     if (!prompt) {
       return { status: 400, body: { error: "No prompt provided" } };
     }
@@ -424,8 +435,8 @@ export async function handleGenerateImage(input: {
                 prompt: sanitizedPrompt,
                 mode: "base",
                 cfg_scale: isSchnell ? 0 : 3.5,
-                width: 1024,
-                height: 1024,
+                width: imgWidth,
+                height: imgHeight,
                 steps: isSchnell ? 4 : devSteps,
               }),
             });

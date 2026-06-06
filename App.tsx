@@ -29,6 +29,14 @@ const IMAGE_MODELS = [
     { id: 'flux.1-dev', label: 'FLUX.1 Dev (quality)' },
 ];
 
+const ASPECT_RATIOS = [
+    { id: '1:1', label: 'Square 1:1 (1024×1024)' },
+    { id: '16:9', label: 'Landscape 16:9 (1344×768)' },
+    { id: '9:16', label: 'Portrait 9:16 (768×1344)' },
+    { id: '3:2', label: 'Photo 3:2 (1216×832)' },
+    { id: '3:4', label: 'Portrait 3:4 (896×1152)' },
+];
+
 // Short labels for the result badges.
 const MODEL_BADGE: Record<string, string> = {
     'flux.1-schnell': 'FLUX.1 Schnell',
@@ -65,6 +73,7 @@ const App: React.FC = () => {
 
     const [textModel, setTextModel] = useState<string>('auto');
     const [imageModel, setImageModel] = useState<string>('auto');
+    const [aspectRatio, setAspectRatio] = useState<string>('1:1');
     const [activeTextModel, setActiveTextModel] = useState<string>('');
     const [activeImageModel, setActiveImageModel] = useState<string>('');
     const [description, setDescription] = useState<string>('');
@@ -117,7 +126,7 @@ const App: React.FC = () => {
         setGeneratedImage(null);
         setActiveImageModel('');
         try {
-            const { image, model } = await generateImage(generatedPrompt, imageModel);
+            const { image, model } = await generateImage(generatedPrompt, imageModel, aspectRatio);
             setGeneratedImage(image);
             setActiveImageModel(model || imageModel);
         } catch (err) {
@@ -207,6 +216,12 @@ const App: React.FC = () => {
                                     <label className="text-xs font-medium text-slate-500">Image model</label>
                                     <select value={imageModel} onChange={(e) => setImageModel(e.target.value)} className={selectClass}>
                                         {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                                    </select>
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-medium text-slate-500">Aspect ratio</label>
+                                    <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className={selectClass}>
+                                        {ASPECT_RATIOS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                                     </select>
                                 </div>
                                 <p className="rounded-lg border border-white/5 bg-slate-950/50 p-2.5 text-[11px] leading-relaxed text-slate-500">
