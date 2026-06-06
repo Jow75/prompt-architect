@@ -60,7 +60,7 @@ export const ImageDescriptionDisplay: React.FC<ImageDescriptionDisplayProps> = (
             <div className="min-h-[110px] rounded-xl border border-white/5 bg-slate-950/70 p-4 text-sm leading-relaxed text-slate-200">
                 {isLoading && <LoadingSkeleton />}
                 {error && <p className="text-rose-400">{error}</p>}
-                {!isLoading && !error && description && <p>{description}</p>}
+                {!isLoading && !error && description && <p className="whitespace-pre-wrap">{description}</p>}
                 {!isLoading && !error && !description && (
                     <p className="text-slate-500">
                         Click <span className="font-medium text-slate-400">Enhance with AI</span> to expand your fields into a richer,

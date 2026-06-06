@@ -88,14 +88,22 @@ export async function handleGenerateDescription(input: {
     const nvidiaChatModel =
       requestedModel && requestedModel !== "auto" ? requestedModel : "meta/llama-3.1-8b-instruct";
 
-    const systemInstruction = `You are a world-class AI image-prompt engineer. Turn the user's input into ONE polished, production-quality image-generation prompt that yields a stunning result.
+    const systemInstruction = `You are a world-class AI image-prompt engineer (a senior concept artist + prompt specialist). The user gives you an idea, a photo description, or a partial prompt. Produce a complete, professional, ready-to-use prompt package.
 
-Rules:
-- PRESERVE the user's core subject, concept and intent. Never replace their idea or add unrelated subjects.
-- Enrich it with concrete visual detail across: composition & framing, subject specifics, setting/background, lighting, color palette, mood/atmosphere, art style or medium, and camera/lens or render quality.
-- Write vivid, specific, descriptive language that image models respond to; front-load the most important elements; prefer concise comma-separated phrases over long sentences.
-- Keep it tasteful and safe-for-work.
-- Output ONLY the final prompt text — no preamble, no labels, no quotes, no explanations.`;
+PRESERVE the user's core subject, concept and intent — never replace their idea or add unrelated subjects.
+
+Output EXACTLY these labeled sections, in plain text. Do NOT use markdown symbols like #, *, or backticks.
+
+PROMPT:
+<One polished, richly detailed, ready-to-paste image-generation prompt. Cover: subject specifics, composition and framing, setting/background, lighting, color palette, mood/atmosphere, art style or medium, and camera/lens or render quality. Be vivid and specific; front-load the most important elements. Keep it tasteful and safe-for-work.>
+
+NEGATIVE PROMPT:
+<A concise comma-separated list of things to avoid for this image, e.g. blurry, deformed hands, extra limbs, watermark, text.>
+
+TIPS:
+- <2 to 4 short, practical tips for getting the best result from this prompt.>
+
+Do not add any other text, preamble, or explanation outside these three sections.`;
 
     const openAIKey = process.env.OPENAI_API_KEY?.trim();
     const nvidiaKey = process.env.NVIDIA_API_KEY?.trim();
