@@ -5,8 +5,16 @@ import { GeneratedPromptDisplay } from './components/GeneratedPromptDisplay';
 import { ImageDescriptionDisplay } from './components/ImageDescriptionDisplay';
 import { GeneratedImageDisplay } from './components/GeneratedImageDisplay';
 import { Header } from './components/Header';
+import { SuggestionChips } from './components/SuggestionChips';
 import { generateVividDescription, generateImage } from './services/geminiService';
 import { GenerateIcon, ImageIcon } from './components/icons';
+
+// Common, click-to-add keyword suggestions for the relevant fields.
+const STYLE_OPTIONS = ['photorealistic', 'cinematic concept art', 'anime', 'oil painting', 'watercolor', '3D render', 'digital painting', 'pixel art', 'comic book style', 'pencil sketch'];
+const LIGHTING_OPTIONS = ['golden hour', 'soft natural light', 'volumetric god rays', 'neon glow', 'studio lighting', 'rim light', 'dramatic shadows', 'cinematic lighting', 'backlight'];
+const CAMERA_OPTIONS = ['8k', 'ultra detailed', 'sharp focus', '35mm lens', '85mm portrait', 'shallow depth of field', 'wide angle', 'bokeh', 'DSLR photo'];
+const DETAIL_OPTIONS = ['detailed face', 'expressive eyes', 'natural skin texture', 'intricate details', 'flowing hair', 'subtle freckles'];
+const NEGATIVE_OPTIONS = ['blurry', 'low quality', 'watermark', 'text', 'signature', 'deformed hands', 'extra limbs', 'distorted', 'oversaturated', 'bad anatomy', 'cropped', 'jpeg artifacts'];
 
 const fieldClass =
     'w-full rounded-xl border border-white/10 bg-slate-950/60 p-3 text-sm text-slate-200 placeholder-slate-500 transition focus:border-violet-500/50 focus:outline-none focus:ring-2 focus:ring-violet-500/30';
@@ -229,16 +237,21 @@ const App: React.FC = () => {
                             {input('expression', 'Expression / mood  ·  e.g. curious, a faint hopeful smile')}
                             {input('clothing', 'Clothing / attire  ·  e.g. rugged khaki outfit, wide-brim hat, gloves')}
                             {field('details', 'Extra details & props  ·  e.g. a brass compass, a leather satchel, freckles')}
+                            <SuggestionChips value={promptData.details} options={DETAIL_OPTIONS} onChange={(v) => handleInputChange('details', v)} />
                         </PromptInputSection>
 
                         <PromptInputSection title="Style & Camera">
                             {field('style', 'Art style  ·  e.g. cinematic concept art, photorealistic, anime, oil painting')}
+                            <SuggestionChips value={promptData.style} options={STYLE_OPTIONS} onChange={(v) => handleInputChange('style', v)} />
                             {field('lighting', 'Lighting  ·  e.g. golden-hour backlight, soft god rays, neon glow')}
+                            <SuggestionChips value={promptData.lighting} options={LIGHTING_OPTIONS} onChange={(v) => handleInputChange('lighting', v)} />
                             {field('camera', 'Camera & quality  ·  e.g. wide shot, 35mm lens, sharp focus, 8k detail')}
+                            <SuggestionChips value={promptData.camera} options={CAMERA_OPTIONS} onChange={(v) => handleInputChange('camera', v)} />
                         </PromptInputSection>
 
                         <PromptInputSection title="Negative Prompt">
                             {field('negativePrompt', 'Things to avoid  ·  e.g. blurry, watermark, extra limbs, text, low quality')}
+                            <SuggestionChips value={promptData.negativePrompt} options={NEGATIVE_OPTIONS} onChange={(v) => handleInputChange('negativePrompt', v)} />
                         </PromptInputSection>
 
                         <PromptInputSection title="Model">
