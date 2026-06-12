@@ -1,11 +1,14 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { PromptData } from './types';
 import { PromptInputSection } from './components/PromptInputSection';
 import { GeneratedPromptDisplay } from './components/GeneratedPromptDisplay';
 import { ImageDescriptionDisplay } from './components/ImageDescriptionDisplay';
 import { GeneratedImageDisplay } from './components/GeneratedImageDisplay';
 import { Header } from './components/Header';
+import { LoginScreen } from './components/LoginScreen';
 import { SuggestionChips } from './components/SuggestionChips';
+import { supabase } from './services/supabase';
 import { generateVividDescription, generateImage } from './services/geminiService';
 import { GenerateIcon, ImageIcon } from './components/icons';
 
@@ -77,6 +80,18 @@ const EXAMPLE_PROMPT: PromptData = {
 };
 
 const App: React.FC = () => {
+    const [session, setSession] = useState<Session | null>(null);
+    const [authReady, setAuthReady] = useState(false);
+
+    useEffect(() => {
+        supabase.auth.getSession().then(({ data }) => {
+            setSession(data.session);
+            setAuthReady(true);
+        });
+        const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+        return () => sub.subscription.unsubscribe();
+    }, []);
+
     const [promptData, setPromptData] = useState<PromptData>(EMPTY_PROMPT);
 
     const [textModel, setTextModel] = useState<string>('auto');
@@ -201,9 +216,21 @@ const App: React.FC = () => {
         />
     );
 
+    if (!authReady) {
+        return (
+            <div className="flex min-h-screen items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+            </div>
+        );
+    }
+
+    if (!session) {
+        return <LoginScreen />;
+    }
+
     return (
         <div className="min-h-screen font-sans text-slate-200">
-            <Header />
+            <Header email={session.user.email ?? undefined} onSignOut={() => supabase.auth.signOut()} />
             <main className="container mx-auto px-4 py-8 lg:px-8">
                 <div className="mb-8 max-w-2xl">
                     <h2 className="text-2xl font-bold text-white sm:text-3xl">Build a perfect image prompt</h2>

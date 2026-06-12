@@ -1,6 +1,7 @@
 import type { Context } from "@netlify/functions";
 import { handleGenerateImage } from "../../api/handlers";
 import { checkRateLimit, isAllowedOrigin } from "../../api/access";
+import { requireUser } from "../../api/auth";
 
 // Netlify serverless function backing POST /api/generate-image.
 // NOTE: image generation must complete within the function timeout (10s on the
@@ -12,6 +13,10 @@ export default async (req: Request, context: Context): Promise<Response> => {
   }
   if (!isAllowedOrigin(req)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const user = await requireUser(req);
+  if (!user) {
+    return Response.json({ error: "Please sign in to generate images." }, { status: 401 });
   }
   const rl = await checkRateLimit(context.ip, "img", 40);
   if (!rl.ok) {

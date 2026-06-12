@@ -1,6 +1,7 @@
 import type { Context } from "@netlify/functions";
 import { handleGenerateDescription } from "../../api/handlers";
 import { checkRateLimit, isAllowedOrigin } from "../../api/access";
+import { requireUser } from "../../api/auth";
 
 // Netlify serverless function backing POST /api/generate-description.
 export default async (req: Request, context: Context): Promise<Response> => {
@@ -9,6 +10,10 @@ export default async (req: Request, context: Context): Promise<Response> => {
   }
   if (!isAllowedOrigin(req)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const user = await requireUser(req);
+  if (!user) {
+    return Response.json({ error: "Please sign in to use this." }, { status: 401 });
   }
   const rl = await checkRateLimit(context.ip, "txt", 80);
   if (!rl.ok) {

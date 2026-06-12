@@ -2,6 +2,16 @@
 // `model` is the specific model to use (e.g. "flux.1-dev" or a chat model id),
 // or "auto" to let the server pick a sensible default.
 
+import { getAccessToken } from './supabase';
+
+async function authedHeaders(): Promise<Record<string, string>> {
+    const token = await getAccessToken();
+    return {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+}
+
 export async function generateVividDescription(
     prompt: string,
     model: string = "auto",
@@ -10,7 +20,7 @@ export async function generateVividDescription(
     try {
         const response = await fetch("/api/generate-description", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await authedHeaders(),
             body: JSON.stringify({ prompt, provider: "nvidia", model, task }),
         });
 
@@ -40,7 +50,7 @@ export async function generateImage(
     try {
         const response = await fetch("/api/generate-image", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await authedHeaders(),
             body: JSON.stringify({ prompt, provider: "nvidia", model, aspectRatio, seed }),
         });
 

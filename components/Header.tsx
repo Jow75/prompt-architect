@@ -1,7 +1,12 @@
 import React from 'react';
 import { SparklesIcon } from './icons';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+    email?: string;
+    onSignOut?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ email, onSignOut }) => {
     return (
         <header className="sticky top-0 z-20 border-b border-white/5 bg-slate-950/70 backdrop-blur-xl">
             <div className="container mx-auto flex items-center gap-3 px-4 py-4 lg:px-8">
@@ -16,6 +21,20 @@ export const Header: React.FC = () => {
                         AI Image Prompt Builder
                     </span>
                 </div>
+                {(email || onSignOut) && (
+                    <div className="ml-auto flex items-center gap-3">
+                        {email && <span className="hidden text-xs text-slate-400 sm:inline">{email}</span>}
+                        {onSignOut && (
+                            <button
+                                type="button"
+                                onClick={onSignOut}
+                                className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-white/10"
+                            >
+                                Sign out
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
         </header>
     );
