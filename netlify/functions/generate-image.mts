@@ -1,6 +1,6 @@
 import type { Context } from "@netlify/functions";
 import { handleGenerateImage } from "../../api/handlers";
-import { checkRateLimit, isAllowedOrigin } from "../../api/access";
+import { checkRateLimit, checkDailyQuota, isAllowedOrigin } from "../../api/access";
 import { requireUser } from "../../api/auth";
 
 // Netlify serverless function backing POST /api/generate-image.
@@ -21,6 +21,10 @@ export default async (req: Request, context: Context): Promise<Response> => {
   const rl = await checkRateLimit(context.ip, "img", 40);
   if (!rl.ok) {
     return Response.json({ error: rl.message ?? "Rate limited" }, { status: rl.status ?? 429 });
+  }
+  const quota = await checkDailyQuota(user.id, "img", 30);
+  if (!quota.ok) {
+    return Response.json({ error: quota.message ?? "Daily limit reached" }, { status: quota.status ?? 429 });
   }
 
   let body: { prompt?: string; provider?: string } = {};

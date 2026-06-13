@@ -29,6 +29,26 @@ export async function checkRateLimit(ip: string | undefined, namespace: string, 
   }
 }
 
+// Per-USER daily quota (free-tier cap), keyed by Supabase user id. Resets at UTC
+// midnight. Fails OPEN if the store is unavailable. Phase 3 will raise/remove the
+// limit for paying users.
+export async function checkDailyQuota(userId: string | undefined, namespace: string, limit: number): Promise<AccessResult> {
+  if (!userId) return { ok: true };
+  try {
+    const store = getStore("quota");
+    const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+    const key = `${namespace}:${userId}:${day}`;
+    const current = Number((await store.get(key)) || 0);
+    if (current >= limit) {
+      return { ok: false, status: 429, message: `You've reached today's free limit of ${limit}. It resets tomorrow — upgrade for more.` };
+    }
+    await store.set(key, String(current + 1));
+    return { ok: true };
+  } catch {
+    return { ok: true };
+  }
+}
+
 // Reject obvious cross-origin / off-site callers. Same-origin browser requests
 // (the SPA) always pass; requests with no Origin are allowed (not hard-blocked).
 export function isAllowedOrigin(req: Request): boolean {
