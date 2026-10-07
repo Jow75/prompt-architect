@@ -5,14 +5,27 @@ interface GeneratedImageDisplayProps {
     images: string[];
     count: number;
     isLoading: boolean;
+    loadingStep?: string;
     error: string | null;
     activeProvider?: string;
+    onDismissError?: () => void;
 }
 
-const dataUrl = (b64: string) => `data:${b64.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${b64}`;
+const dataUrl = (b64: string) => {
+    if (b64.startsWith('data:image/')) return b64;
+    return `data:${b64.startsWith('/9j/') ? 'image/jpeg' : 'image/png'};base64,${b64}`;
+};
 const ext = (b64: string) => (b64.startsWith('/9j/') ? 'jpg' : 'png');
 
-export const GeneratedImageDisplay: React.FC<GeneratedImageDisplayProps> = ({ images, count, isLoading, error, activeProvider }) => {
+export const GeneratedImageDisplay: React.FC<GeneratedImageDisplayProps> = ({
+    images,
+    count,
+    isLoading,
+    loadingStep,
+    error,
+    activeProvider,
+    onDismissError,
+}) => {
     const multi = (isLoading ? count : images.length) > 1;
     const gridClass = multi ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-1';
 
@@ -20,24 +33,47 @@ export const GeneratedImageDisplay: React.FC<GeneratedImageDisplayProps> = ({ im
         <div className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-slate-900/60 p-6 shadow-xl shadow-black/20">
             <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-white">Preview {images.length > 1 ? 'Images' : 'Image'}</h2>
-                {activeProvider && (
-                    <span className="rounded-md border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-emerald-300">
-                        {activeProvider}
-                    </span>
-                )}
+                <div className="flex items-center gap-2">
+                    {activeProvider && (
+                        <span className="rounded-md border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-emerald-300">
+                            {activeProvider}
+                        </span>
+                    )}
+                    {error && onDismissError && !isLoading && (
+                        <button
+                            onClick={onDismissError}
+                            className="text-xs text-slate-400 hover:text-slate-200 transition"
+                        >
+                            Dismiss
+                        </button>
+                    )}
+                </div>
             </div>
 
             {isLoading && (
-                <div className={gridClass}>
-                    {Array.from({ length: count }).map((_, i) => (
-                        <div key={i} className="aspect-square w-full animate-pulse rounded-xl bg-slate-800/80" />
-                    ))}
+                <div className="flex flex-col gap-3">
+                    <div className={gridClass}>
+                        {Array.from({ length: count }).map((_, i) => (
+                            <div
+                                key={i}
+                                className="aspect-square w-full animate-pulse rounded-xl bg-slate-800/80 flex flex-col items-center justify-center p-4 text-center"
+                            >
+                                <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent mb-2" />
+                                <span className="text-xs font-medium text-slate-300">
+                                    {loadingStep || 'Generating image...'}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
             {error && !isLoading && (
-                <div className="flex aspect-square items-center justify-center rounded-xl border border-white/5 bg-slate-950/70 p-4">
-                    <p className="px-4 text-center text-sm leading-relaxed text-rose-400">{error}</p>
+                <div className="flex aspect-square items-center justify-center rounded-xl border border-rose-500/20 bg-rose-950/20 p-6 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                        <span className="text-rose-400 text-sm font-semibold">Generation Failed</span>
+                        <p className="max-w-sm text-xs leading-relaxed text-rose-300/90">{error}</p>
+                    </div>
                 </div>
             )}
 

@@ -1,10 +1,45 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Validates the Supabase access token (JWT) on the Bearer header and returns the
-// authenticated user id, or null if missing/invalid. Used to require login on /api.
-// Compatible with both standard Fetch API Requests (Netlify Functions) and Express requests (local server).
-export async function requireUser(req: any): Promise<{ id: string; email?: string } | null> {
-  if (!req) return null;
+export interface AuthUser {
+  id: string;
+  email?: string;
+}
+
+export type AuthFailureCode =
+  | "AUTH_REQUIRED"
+  | "TOKEN_EXPIRED"
+  | "INVALID_TOKEN"
+  | "SERVER_CONFIG_ERROR";
+
+export interface AuthErrorDetails {
+  code: AuthFailureCode;
+  message: string;
+  status: number;
+}
+
+export type AuthResult =
+  | { success: true; user: AuthUser; error?: undefined }
+  | { success: false; error: AuthErrorDetails; user?: undefined };
+
+/**
+ * Validates the Supabase access token (JWT) from the Bearer Authorization header.
+ * Distinguishes between:
+ * - Missing token (AUTH_REQUIRED, 401)
+ * - Expired token (TOKEN_EXPIRED, 401)
+ * - Invalid signature / malformed token (INVALID_TOKEN, 401)
+ * - Server missing Supabase environment variables (SERVER_CONFIG_ERROR, 500)
+ */
+export async function verifyAuth(req: any): Promise<AuthResult> {
+  if (!req) {
+    return {
+      success: false,
+      error: {
+        code: "AUTH_REQUIRED",
+        message: "No request context provided.",
+        status: 401,
+      },
+    };
+  }
 
   let authHeader = "";
   if (typeof req.headers?.get === "function") {
@@ -16,14 +51,34 @@ export async function requireUser(req: any): Promise<{ id: string; email?: strin
     authHeader = typeof raw === "string" ? raw : "";
   }
 
-  const token = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
-  if (!token) return null;
+  const token = authHeader.toLowerCase().startsWith("bearer ")
+    ? authHeader.slice(7).trim()
+    : "";
+
+  if (!token) {
+    return {
+      success: false,
+      error: {
+        code: "AUTH_REQUIRED",
+        message: "Authentication required. Please sign in to continue.",
+        status: 401,
+      },
+    };
+  }
 
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
   if (!url || !anonKey || url.includes("placeholder")) {
-    console.error("Supabase env vars missing or unconfigured on the server.");
-    return null;
+    console.error("[Auth] Server environment error: Supabase URL or Anon Key is missing or unconfigured.");
+    return {
+      success: false,
+      error: {
+        code: "SERVER_CONFIG_ERROR",
+        message: "Authentication server is misconfigured. Please verify server environment variables.",
+        status: 500,
+      },
+    };
   }
 
   try {
@@ -33,12 +88,51 @@ export async function requireUser(req: any): Promise<{ id: string; email?: strin
         persistSession: false,
       },
     });
+
     const { data, error } = await supabase.auth.getUser(token);
-    if (error || !data.user) return null;
-    return { id: data.user.id, email: data.user.email ?? undefined };
-  } catch (err) {
-    console.error("requireUser failed:", err);
-    return null;
+
+    if (error || !data.user) {
+      const errMsg = error?.message || "Invalid token";
+      const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
+
+      console.warn(`[Auth] Token validation failed (${isExpired ? "EXPIRED" : "INVALID"}):`, errMsg);
+
+      return {
+        success: false,
+        error: {
+          code: isExpired ? "TOKEN_EXPIRED" : "INVALID_TOKEN",
+          message: isExpired
+            ? "Your authentication session has expired. Please refresh your session or sign in again."
+            : "Invalid authentication credentials.",
+          status: 401,
+        },
+      };
+    }
+
+    return {
+      success: true,
+      user: {
+        id: data.user.id,
+        email: data.user.email ?? undefined,
+      },
+    };
+  } catch (err: any) {
+    console.error("[Auth] Unexpected exception during token validation:", err);
+    return {
+      success: false,
+      error: {
+        code: "SERVER_CONFIG_ERROR",
+        message: "Failed to verify session token due to an internal server error.",
+        status: 500,
+      },
+    };
   }
 }
 
+/**
+ * Backwards-compatible helper returning User object or null.
+ */
+export async function requireUser(req: any): Promise<AuthUser | null> {
+  const result = await verifyAuth(req);
+  return result.success ? result.user : null;
+}

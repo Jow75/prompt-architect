@@ -1,4 +1,4 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, Session } from '@supabase/supabase-js';
 
 // Public Supabase URL + anon key — safe to ship in the client bundle.
 const env = ((import.meta as any).env ?? {}) as Record<string, string | undefined>;
@@ -30,15 +30,67 @@ export const supabase: SupabaseClient = createClient(clientUrl, clientKey, {
     },
 });
 
-// Current access token (JWT) for authorizing /api requests, or null if signed out / unconfigured.
-export async function getAccessToken(): Promise<string | null> {
-    if (!isSupabaseConfigured) return null;
+/**
+ * Checks whether the user is visibly authenticated (active session exists).
+ */
+export async function isUserSignedIn(): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
     try {
         const { data } = await supabase.auth.getSession();
-        return data.session?.access_token ?? null;
+        return Boolean(data.session?.user);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Retrieves a valid Supabase access token (JWT).
+ * Proactively verifies token expiration against epoch time.
+ * If the token is expired or within 60 seconds of expiring, or if `forceRefresh` is requested,
+ * it triggers a legitimate session refresh with Supabase auth.
+ * Returns the valid JWT string, or null if no session exists or refresh failed.
+ */
+export async function getValidAccessToken(forceRefresh = false): Promise<string | null> {
+    if (!isSupabaseConfigured) return null;
+
+    try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error || !data.session) {
+            return null;
+        }
+
+        const session: Session = data.session;
+        const expiresAtSec = session.expires_at ?? 0;
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        // If forced or expires within 60 seconds, refresh session
+        const isExpiringSoon = expiresAtSec > 0 && (expiresAtSec - nowSec < 60);
+
+        if (forceRefresh || isExpiringSoon) {
+            console.log('[Auth] Access token is expiring or refresh requested; refreshing session...');
+            const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+            if (refreshError || !refreshed.session) {
+                console.warn('[Auth] Session refresh failed:', refreshError?.message);
+                // If expired past expiry, token is invalid
+                if (expiresAtSec > 0 && nowSec >= expiresAtSec) {
+                    return null;
+                }
+                // Return current token if still technically unexpired
+                return session.access_token || null;
+            }
+            return refreshed.session.access_token || null;
+        }
+
+        return session.access_token || null;
     } catch (err) {
-        console.warn('Failed to retrieve access token:', err);
+        console.warn('[Auth] Exception while retrieving access token:', err);
         return null;
     }
 }
 
+/**
+ * Backwards-compatible alias for getValidAccessToken.
+ */
+export async function getAccessToken(): Promise<string | null> {
+    return getValidAccessToken(false);
+}

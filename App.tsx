@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { PromptData } from './types';
 import { PromptInputSection } from './components/PromptInputSection';
@@ -10,6 +10,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { SuggestionChips } from './components/SuggestionChips';
 import { supabase } from './services/supabase';
 import { generateVividDescription, generateImage } from './services/geminiService';
+import { formatUserFacingError, AuthRequiredError, TokenExpiredError } from './services/errors';
 import { GenerateIcon, ImageIcon } from './components/icons';
 
 // Common, click-to-add keyword suggestions for the relevant fields.
@@ -25,19 +26,29 @@ const fieldClass =
 const selectClass =
     'w-full cursor-pointer rounded-xl border border-white/10 bg-slate-950/60 p-2.5 text-sm text-slate-200 transition focus:border-violet-500/50 focus:outline-none focus:ring-2 focus:ring-violet-500/30';
 
-// Models available via the NVIDIA API key (verified). Selecting one uses exactly that model.
+// Live, verified models available in the system
 const TEXT_MODELS = [
-    { id: 'auto', label: 'Auto (recommended)' },
-    { id: 'meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B (fast)' },
-    { id: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B (best)' },
-    { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
-    { id: 'qwen/qwen3-next-80b-a3b-instruct', label: 'Qwen3 80B' },
+    { id: 'auto', label: 'Auto (Recommended - Nemotron 550B)' },
+    { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'NVIDIA Nemotron 3 Ultra 550B' },
+    { id: 'openai/gpt-oss-20b', label: 'NVIDIA GPT-OSS 20B (Fast)' },
+    { id: 'gemini-2.5-flash', label: 'Google Gemini 2.5 Flash' },
+    { id: 'gpt-4o-mini', label: 'OpenAI GPT-4o Mini' },
 ];
 
 const IMAGE_MODELS = [
-    { id: 'auto', label: 'Auto (recommended)' },
-    { id: 'flux.1-schnell', label: 'FLUX.1 Schnell (fast)' },
-    { id: 'flux.1-dev', label: 'FLUX.1 Dev (quality)' },
+    { id: 'auto', label: 'Auto (Recommended - FLUX.2 Klein 4B)' },
+    { id: 'flux.2-klein-4b', label: 'NVIDIA FLUX.2 Klein 4B (Fast ~2s)' },
+    { id: 'flux.1-schnell', label: 'NVIDIA FLUX.1 Schnell' },
+    { id: 'flux.1-dev', label: 'NVIDIA FLUX.1 Dev (Quality)' },
+    { id: 'dall-e-3', label: 'OpenAI DALL-E 3' },
+    { id: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' },
+];
+
+const PROVIDER_OPTIONS = [
+    { id: 'auto', label: 'Auto (NVIDIA First + Fallback)' },
+    { id: 'nvidia', label: 'NVIDIA' },
+    { id: 'openai', label: 'OpenAI' },
+    { id: 'gemini', label: 'Google Gemini' },
 ];
 
 const ASPECT_RATIOS = [
@@ -50,12 +61,15 @@ const ASPECT_RATIOS = [
 
 // Short labels for the result badges.
 const MODEL_BADGE: Record<string, string> = {
+    'flux.2-klein-4b': 'FLUX.2 Klein',
     'flux.1-schnell': 'FLUX.1 Schnell',
     'flux.1-dev': 'FLUX.1 Dev',
-    'meta/llama-3.1-8b-instruct': 'Llama 3.1 8B',
-    'meta/llama-3.3-70b-instruct': 'Llama 3.3 70B',
-    'openai/gpt-oss-120b': 'GPT-OSS 120B',
-    'qwen/qwen3-next-80b-a3b-instruct': 'Qwen3 80B',
+    'nvidia/nemotron-3-ultra-550b-a55b': 'Nemotron 550B',
+    'openai/gpt-oss-20b': 'GPT-OSS 20B',
+    'gemini-2.5-flash': 'Gemini Flash',
+    'gpt-4o-mini': 'GPT-4o Mini',
+    'dall-e-3': 'DALL-E 3',
+    'gemini-2.5-flash-image': 'Gemini Image',
 };
 const badge = (id: string) => MODEL_BADGE[id] || (id && id !== 'auto' ? id : '');
 
@@ -64,7 +78,7 @@ const EMPTY_PROMPT: PromptData = {
     expression: '', clothing: '', style: '', lighting: '', camera: '', negativePrompt: '',
 };
 
-// Loaded on demand via the "Load example" button so people can see a full sample.
+// Full sample prompt
 const EXAMPLE_PROMPT: PromptData = {
     subject: 'A young female explorer with freckles and windswept auburn hair',
     action: 'standing at the edge of an ancient stone bridge, gazing over a vast jungle canyon',
@@ -84,6 +98,9 @@ const App: React.FC = () => {
     const [authReady, setAuthReady] = useState(false);
     const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot-password' | 'update-password'>('signin');
     const [authError, setAuthError] = useState<string | null>(null);
+
+    // Concurrency guard to prevent double-clicks & race conditions
+    const isGeneratingRef = useRef(false);
 
     useEffect(() => {
         // Parse URL hash / query parameters for password recovery or OAuth error feedback
@@ -126,18 +143,23 @@ const App: React.FC = () => {
 
     const [promptData, setPromptData] = useState<PromptData>(EMPTY_PROMPT);
 
+    const [textProvider, setTextProvider] = useState<string>('auto');
     const [textModel, setTextModel] = useState<string>('auto');
+    const [imageProvider, setImageProvider] = useState<string>('auto');
     const [imageModel, setImageModel] = useState<string>('auto');
     const [aspectRatio, setAspectRatio] = useState<string>('1:1');
+
     const [activeTextModel, setActiveTextModel] = useState<string>('');
     const [activeImageModel, setActiveImageModel] = useState<string>('');
     const [description, setDescription] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
+    const [textLoadingStep, setTextLoadingStep] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
 
     const [numImages, setNumImages] = useState<number>(1);
     const [generatedImages, setGeneratedImages] = useState<string[]>([]);
     const [isImageLoading, setIsImageLoading] = useState<boolean>(false);
+    const [imageLoadingStep, setImageLoadingStep] = useState<string>('');
     const [imageError, setImageError] = useState<string | null>(null);
 
     const [editImage, setEditImage] = useState<string | null>(null);
@@ -149,7 +171,7 @@ const App: React.FC = () => {
 
     const hasContent = useMemo(() => Object.values(promptData).some(v => String(v).trim() !== ''), [promptData]);
 
-    // Clean, comma-separated prompt — usable in any AI image tool.
+    // Clean, comma-separated prompt assembled from individual fields
     const generatedPrompt = useMemo(() => {
         return [
             promptData.subject, promptData.action, promptData.environment, promptData.details,
@@ -164,30 +186,61 @@ const App: React.FC = () => {
     const canGenerate = generatedPrompt.trim().length > 0 && !isLoading && !isImageLoading;
 
     const handleEnhance = async () => {
+        if (isGeneratingRef.current || isLoading || isImageLoading) return;
+        isGeneratingRef.current = true;
         setIsLoading(true);
+        setTextLoadingStep('Preparing prompt...');
         setError(null);
         setDescription('');
         setActiveTextModel('');
+
         try {
-            const result = await generateVividDescription(generatedPrompt, textModel);
+            const result = await generateVividDescription(
+                generatedPrompt,
+                textModel,
+                'generate',
+                textProvider,
+                (step) => setTextLoadingStep(step)
+            );
             setDescription(result.description);
             setActiveTextModel(result.model || textModel);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        } catch (err: any) {
+            const formatted = formatUserFacingError(err);
+            setError(formatted);
+            if (err instanceof AuthRequiredError || err instanceof TokenExpiredError) {
+                setAuthError(formatted);
+                setAuthMode('signin');
+            }
         } finally {
             setIsLoading(false);
+            setTextLoadingStep('');
+            isGeneratingRef.current = false;
         }
     };
 
-    const handleGenerateImage = async () => {
+    const handleGenerateImage = async (customPrompt?: string) => {
+        if (isGeneratingRef.current || isLoading || isImageLoading) return;
+        const promptToRun = (customPrompt || generatedPrompt).trim();
+        if (!promptToRun) return;
+
+        isGeneratingRef.current = true;
         setIsImageLoading(true);
+        setImageLoadingStep('Preparing prompt...');
         setImageError(null);
         setGeneratedImages([]);
         setActiveImageModel('');
+
         try {
-            // Each image is a separate request (distinct seed) so multiple never hit the timeout.
+            // Distinct seed per variation
             const requests = Array.from({ length: numImages }, () =>
-                generateImage(generatedPrompt, imageModel, aspectRatio, Math.floor(Math.random() * 1_000_000_000)),
+                generateImage(
+                    promptToRun,
+                    imageModel,
+                    aspectRatio,
+                    Math.floor(Math.random() * 1_000_000_000),
+                    imageProvider,
+                    (step) => setImageLoadingStep(step)
+                ),
             );
             const results = await Promise.allSettled(requests);
             const ok = results.flatMap(r => (r.status === 'fulfilled' ? [r.value] : []));
@@ -197,10 +250,17 @@ const App: React.FC = () => {
             }
             setGeneratedImages(ok.map(v => v.image));
             setActiveImageModel(ok[0].model || imageModel);
-        } catch (err) {
-            setImageError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        } catch (err: any) {
+            const formatted = formatUserFacingError(err);
+            setImageError(formatted);
+            if (err instanceof AuthRequiredError || err instanceof TokenExpiredError) {
+                setAuthError(formatted);
+                setAuthMode('signin');
+            }
         } finally {
             setIsImageLoading(false);
+            setImageLoadingStep('');
+            isGeneratingRef.current = false;
         }
     };
 
@@ -211,7 +271,6 @@ const App: React.FC = () => {
             setError('Please upload a valid image file (JPEG, PNG, or WebP).');
             return;
         }
-        // Limit upload to 5MB to prevent browser tab memory exhaustion
         const MAX_SIZE_BYTES = 5 * 1024 * 1024;
         if (file.size > MAX_SIZE_BYTES) {
             setError('Image file is too large. Maximum allowed size is 5MB.');
@@ -226,19 +285,35 @@ const App: React.FC = () => {
     };
 
     const handleGenerateEditPrompt = async () => {
-        if (!editInstruction.trim()) return;
+        if (!editInstruction.trim() || isGeneratingRef.current || isLoading || isImageLoading) return;
+        isGeneratingRef.current = true;
         setIsLoading(true);
+        setTextLoadingStep('Preparing edit prompt...');
         setError(null);
         setDescription('');
         setActiveTextModel('');
+
         try {
-            const result = await generateVividDescription(editInstruction, textModel, 'edit');
+            const result = await generateVividDescription(
+                editInstruction,
+                textModel,
+                'edit',
+                textProvider,
+                (step) => setTextLoadingStep(step)
+            );
             setDescription(result.description);
             setActiveTextModel(result.model || textModel);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        } catch (err: any) {
+            const formatted = formatUserFacingError(err);
+            setError(formatted);
+            if (err instanceof AuthRequiredError || err instanceof TokenExpiredError) {
+                setAuthError(formatted);
+                setAuthMode('signin');
+            }
         } finally {
             setIsLoading(false);
+            setTextLoadingStep('');
+            isGeneratingRef.current = false;
         }
     };
 
@@ -264,7 +339,7 @@ const App: React.FC = () => {
 
     if (!authReady) {
         return (
-            <div className="flex min-h-screen items-center justify-center">
+            <div className="flex min-h-screen items-center justify-center bg-slate-950">
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
             </div>
         );
@@ -281,7 +356,7 @@ const App: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen font-sans text-slate-200">
+        <div className="min-h-screen font-sans text-slate-200 bg-slate-950">
             <Header email={session.user.email ?? undefined} onSignOut={() => supabase.auth.signOut()} />
             <main className="container mx-auto px-4 py-8 lg:px-8">
                 <div className="mb-8 max-w-2xl">
@@ -333,28 +408,38 @@ const App: React.FC = () => {
                             <SuggestionChips value={promptData.negativePrompt} options={NEGATIVE_OPTIONS} onChange={(v) => handleInputChange('negativePrompt', v)} />
                         </PromptInputSection>
 
-                        <PromptInputSection title="Model">
+                        <PromptInputSection title="Provider & Model Options">
                             <div className="flex flex-col gap-4">
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-medium text-slate-500">Enhance model</label>
-                                    <select value={textModel} onChange={(e) => setTextModel(e.target.value)} className={selectClass}>
-                                        {TEXT_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-                                    </select>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-xs font-medium text-slate-500">Image provider</label>
+                                        <select value={imageProvider} onChange={(e) => setImageProvider(e.target.value)} className={selectClass}>
+                                            {PROVIDER_OPTIONS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-xs font-medium text-slate-500">Image model</label>
+                                        <select value={imageModel} onChange={(e) => setImageModel(e.target.value)} className={selectClass}>
+                                            {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-xs font-medium text-slate-500">Text enhancement model</label>
+                                        <select value={textModel} onChange={(e) => setTextModel(e.target.value)} className={selectClass}>
+                                            {TEXT_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-xs font-medium text-slate-500">Aspect ratio</label>
+                                        <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className={selectClass}>
+                                            {ASPECT_RATIOS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                                        </select>
+                                    </div>
                                 </div>
                                 <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-medium text-slate-500">Image model</label>
-                                    <select value={imageModel} onChange={(e) => setImageModel(e.target.value)} className={selectClass}>
-                                        {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-                                    </select>
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-medium text-slate-500">Aspect ratio</label>
-                                    <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className={selectClass}>
-                                        {ASPECT_RATIOS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
-                                    </select>
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-medium text-slate-500">Number of images</label>
+                                    <label className="text-xs font-medium text-slate-500">Number of image variations</label>
                                     <select value={numImages} onChange={(e) => setNumImages(Number(e.target.value))} className={selectClass}>
                                         <option value={1}>1 image</option>
                                         <option value={2}>2 variations</option>
@@ -363,8 +448,7 @@ const App: React.FC = () => {
                                     </select>
                                 </div>
                                 <p className="rounded-lg border border-white/5 bg-slate-950/50 p-2.5 text-[11px] leading-relaxed text-slate-500">
-                                    Whatever model you pick is the exact one used. <span className="text-slate-400">Auto</span> picks a fast,
-                                    reliable default for you.
+                                    Primary provider is <span className="text-slate-300 font-medium">NVIDIA FLUX</span> (with automatic fallback to configured backups). All keys remain protected server-side.
                                 </p>
                             </div>
                         </PromptInputSection>
@@ -419,35 +503,39 @@ const App: React.FC = () => {
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <button
                                 onClick={handleEnhance}
-                                disabled={!canGenerate}
-                                className="flex items-center justify-center gap-2 rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 font-semibold text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                disabled={!canGenerate || isLoading || isImageLoading}
+                                className="flex items-center justify-center gap-2 rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 font-semibold text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-40 shadow-sm"
                             >
                                 <GenerateIcon />
-                                {isLoading ? 'Enhancing…' : 'Enhance with AI'}
+                                {isLoading ? (textLoadingStep || 'Enhancing…') : 'Enhance with AI'}
                             </button>
                             <button
-                                onClick={handleGenerateImage}
-                                disabled={!canGenerate}
+                                onClick={() => handleGenerateImage()}
+                                disabled={!canGenerate || isLoading || isImageLoading}
                                 className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 font-semibold text-white shadow-lg shadow-violet-900/30 transition hover:from-violet-500 hover:to-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                                 <ImageIcon />
-                                {isImageLoading ? 'Generating…' : 'Generate Image'}
+                                {isImageLoading ? (imageLoadingStep || 'Generating…') : 'Generate Image'}
                             </button>
                         </div>
 
                         <ImageDescriptionDisplay
                             description={description}
                             isLoading={isLoading}
+                            loadingStep={textLoadingStep}
                             error={error}
                             activeProvider={badge(activeTextModel)}
                             onClear={() => { setDescription(''); setError(null); setActiveTextModel(''); }}
+                            onUseForGeneration={(prompt) => handleGenerateImage(prompt)}
                         />
                         <GeneratedImageDisplay
                             images={generatedImages}
                             count={numImages}
                             isLoading={isImageLoading}
+                            loadingStep={imageLoadingStep}
                             error={imageError}
                             activeProvider={badge(activeImageModel)}
+                            onDismissError={() => setImageError(null)}
                         />
                     </div>
                 </div>

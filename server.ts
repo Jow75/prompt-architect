@@ -3,7 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { handleGenerateDescription, handleGenerateImage } from "./api/handlers";
-import { requireUser } from "./api/auth";
+import { verifyAuth } from "./api/auth";
 import { isAllowedOrigin } from "./api/access";
 
 // Load environment variables from .env.local or .env
@@ -15,10 +15,13 @@ app.use(express.json({ limit: "10mb" }));
 
 const PORT = 3000;
 
-// Security & Authentication guard for local development to mirror production Netlify Functions.
+// Security & Authentication guard for local development matching production Netlify Functions.
 const authGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (!isAllowedOrigin(req)) {
-    return res.status(403).json({ error: "Forbidden: Origin not allowed" });
+    return res.status(403).json({
+      success: false,
+      error: { code: "FORBIDDEN", message: "Forbidden: Origin not allowed" },
+    });
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -28,11 +31,15 @@ const authGuard = async (req: express.Request, res: express.Response, next: expr
   );
 
   if (isSupabaseConfigured) {
-    const user = await requireUser(req);
-    if (!user) {
-      return res.status(401).json({ error: "Please sign in to use this." });
+    const authResult = await verifyAuth(req);
+    if (!authResult.success) {
+      const authErr = authResult.error || { code: "AUTH_REQUIRED", message: "Unauthorized", status: 401 };
+      return res.status(authErr.status).json({
+        success: false,
+        error: authErr,
+      });
     }
-    (req as any).user = user;
+    (req as any).user = authResult.user;
   }
   next();
 };
