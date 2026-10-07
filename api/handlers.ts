@@ -60,8 +60,8 @@ export async function handleGenerateDescription(input: {
       };
     }
 
-    // Default NVIDIA chat model is nemotron-3-ultra-550b-a55b (tested and verified live on NIM)
-    const defaultNvidiaModel = process.env.NVIDIA_CHAT_MODEL || "nvidia/nemotron-3-ultra-550b-a55b";
+    // Default NVIDIA chat model is meta/llama-3.2-11b-vision-instruct (fast 5s response, active on NIM)
+    const defaultNvidiaModel = process.env.NVIDIA_CHAT_MODEL || "meta/llama-3.2-11b-vision-instruct";
     const nvidiaChatModel =
       requestedModel && requestedModel !== "auto" ? requestedModel : defaultNvidiaModel;
 
@@ -158,11 +158,11 @@ Do not add any other text, preamble, or explanation outside these three sections
           const keyToUse = nvidiaKey || getApiKeyAndProvider()?.apiKey;
           if (!keyToUse) throw new Error("No NVIDIA API key found.");
 
-          // If requested model was not specified, try nemotron-3-ultra-550b, then gpt-oss-20b as fallback
+          // Try primary fast model, then 90b vision instruct as fallback
           const candidateModels =
             requestedModel && requestedModel !== "auto"
               ? [requestedModel]
-              : [nvidiaChatModel, "openai/gpt-oss-20b"];
+              : [nvidiaChatModel, "meta/llama-3.2-90b-vision-instruct"];
 
           let chatSuccess = false;
           for (const m of candidateModels) {
@@ -173,7 +173,7 @@ Do not add any other text, preamble, or explanation outside these three sections
                   Authorization: `Bearer ${keyToUse}`,
                   "Content-Type": "application/json",
                 },
-                signal: AbortSignal.timeout(12000),
+                signal: AbortSignal.timeout(18000),
                 body: JSON.stringify({
                   model: m,
                   messages: [
