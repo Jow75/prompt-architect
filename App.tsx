@@ -28,9 +28,10 @@ const selectClass =
 
 // Live, verified models available in the system
 const TEXT_MODELS = [
-    { id: 'auto', label: 'Auto (Recommended - Nemotron 550B)' },
-    { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'NVIDIA Nemotron 3 Ultra 550B' },
-    { id: 'openai/gpt-oss-20b', label: 'NVIDIA GPT-OSS 20B (Fast)' },
+    { id: 'auto', label: 'Auto (Recommended - Llama 3.2 11B)' },
+    { id: 'meta/llama-3.2-11b-vision-instruct', label: 'NVIDIA Llama 3.2 11B (Fast ~3s)' },
+    { id: 'meta/llama-3.2-90b-vision-instruct', label: 'NVIDIA Llama 3.2 90B Vision' },
+    { id: 'openai/gpt-oss-20b', label: 'NVIDIA GPT-OSS 20B' },
     { id: 'gemini-2.5-flash', label: 'Google Gemini 2.5 Flash' },
     { id: 'gpt-4o-mini', label: 'OpenAI GPT-4o Mini' },
 ];
@@ -64,6 +65,8 @@ const MODEL_BADGE: Record<string, string> = {
     'flux.2-klein-4b': 'FLUX.2 Klein',
     'flux.1-schnell': 'FLUX.1 Schnell',
     'flux.1-dev': 'FLUX.1 Dev',
+    'meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B',
+    'meta/llama-3.2-90b-vision-instruct': 'Llama 3.2 90B',
     'nvidia/nemotron-3-ultra-550b-a55b': 'Nemotron 550B',
     'openai/gpt-oss-20b': 'GPT-OSS 20B',
     'gemini-2.5-flash': 'Gemini Flash',
@@ -453,7 +456,7 @@ const App: React.FC = () => {
                             </div>
                         </PromptInputSection>
 
-                        <PromptInputSection title="Edit a Photo">
+                        <PromptInputSection title="Photo Editing Prompt">
                             <div className="flex flex-col gap-3">
                                 {editImage ? (
                                     <div className="relative">

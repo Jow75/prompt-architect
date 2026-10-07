@@ -153,6 +153,12 @@ export class NvidiaImageProvider implements ImageProvider {
             throw safetyErr;
           }
 
+          if (response.status === 400) {
+            const clientErr = new Error(`NVIDIA rejected request parameters (400): ${errText.slice(0, 200)}`);
+            (clientErr as any).isClientError = true;
+            throw clientErr;
+          }
+
           throw new Error(`NVIDIA model ${modelId} failed (${response.status}): ${errText.slice(0, 200)}`);
         }
 
@@ -187,8 +193,8 @@ export class NvidiaImageProvider implements ImageProvider {
           model: modelId,
         };
       } catch (err: any) {
-        if (err.isSafetyViolation) {
-          // Re-throw immediately: safety violations should NEVER fall back or retry
+        if (err.isSafetyViolation || err.isClientError) {
+          // Re-throw immediately: safety violations and client errors should NEVER fall back or retry
           throw err;
         }
         lastError = err;

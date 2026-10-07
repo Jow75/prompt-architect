@@ -345,8 +345,9 @@ export async function handleGenerateImage(input: {
     console.error("Error in handleGenerateImage:", error);
 
     const isSafety = Boolean(error.isSafetyViolation);
-    const status = isSafety ? 422 : 503;
-    const code = isSafety ? "SAFETY_VIOLATION" : "PROVIDER_UNAVAILABLE";
+    const isClient = Boolean(error.isClientError);
+    const status = isSafety ? 422 : isClient ? 400 : 503;
+    const code = isSafety ? "SAFETY_VIOLATION" : isClient ? "INVALID_INPUT" : "PROVIDER_UNAVAILABLE";
 
     return {
       status,

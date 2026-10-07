@@ -84,8 +84,8 @@ export class ImageProviderRegistry {
         lastError = err;
 
         // CRITICAL GUARD: Do NOT fall back on content safety rejections or bad client input
-        if (err.isSafetyViolation) {
-          console.warn(`[ProviderRegistry] Safety violation in ${provider.displayName}; stopping fallback sequence.`);
+        if (err.isSafetyViolation || err.isClientError) {
+          console.warn(`[ProviderRegistry] Non-retryable error (${err.isSafetyViolation ? 'safety' : 'client input'}) in ${provider.displayName}; stopping fallback sequence.`);
           throw err;
         }
 
