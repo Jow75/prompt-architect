@@ -142,9 +142,9 @@ Do not add any other text, preamble, or explanation outside these three sections
       providerSequence = ["nvidia"];
     } else {
       providerSequence = [];
-      if (hasGemini) providerSequence.push("gemini");
-      if (hasOpenAI) providerSequence.push("openai");
       if (hasNvidia) providerSequence.push("nvidia");
+      if (hasOpenAI) providerSequence.push("openai");
+      if (hasGemini) providerSequence.push("gemini");
 
       if (providerSequence.length === 0) {
         const fallbackObj = getApiKeyAndProvider();
@@ -329,9 +329,9 @@ export async function handleGenerateImage(input: {
       imageSequence = ["nvidia"];
     } else {
       imageSequence = [];
-      if (hasGemini) imageSequence.push("gemini");
-      if (hasOpenAI) imageSequence.push("openai");
       if (hasNvidia) imageSequence.push("nvidia");
+      if (hasOpenAI) imageSequence.push("openai");
+      if (hasGemini) imageSequence.push("gemini");
 
       if (imageSequence.length === 0) {
         const testObj = getApiKeyAndProvider();
@@ -452,6 +452,7 @@ export async function handleGenerateImage(input: {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
               },
+              signal: AbortSignal.timeout(22000), // Prevent hanging requests and enable fallback
               body: JSON.stringify({
                 prompt: sanitizedPrompt,
                 mode: "base",

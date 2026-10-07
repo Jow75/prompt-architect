@@ -30,14 +30,19 @@ API keys are only ever used server-side; the client just calls `/api/*`.
 **Prerequisites:** Node.js 20+
 
 1. `npm install`
-2. Copy `.env.example` to `.env.local` and set at least `NVIDIA_API_KEY=nvapi-...`.
+2. Copy `.env.example` to `.env.local` and set:
+   - `VITE_SUPABASE_URL` & `VITE_SUPABASE_ANON_KEY` (Supabase project authentication)
+   - `NVIDIA_API_KEY=nvapi-...` (image and text generation)
+   - (Optional) `OPENAI_API_KEY` and `GEMINI_API_KEY` for fallback resilience
 3. `npm run dev` → <http://localhost:3000>
 
 ## Deploy to Netlify
 
-Already configured via [netlify.toml](netlify.toml). Set env vars in Netlify
-(**Site configuration → Environment variables**): `NVIDIA_API_KEY` (required),
-`OPENAI_API_KEY` / `GEMINI_API_KEY` (optional).
+The production deployment runs at [https://si-prompt-architect.netlify.app/](https://si-prompt-architect.netlify.app/) and is configured via [netlify.toml](netlify.toml). Set environment variables in Netlify (**Site configuration → Environment variables**):
+- `VITE_SUPABASE_URL` (required for auth)
+- `VITE_SUPABASE_ANON_KEY` (required for auth)
+- `NVIDIA_API_KEY` (required for FLUX/Llama)
+- `OPENAI_API_KEY` / `GEMINI_API_KEY` (optional for automatic fallback)
 
 ```bash
 npm run build            # build the SPA locally

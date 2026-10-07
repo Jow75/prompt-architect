@@ -40,7 +40,11 @@ export async function checkDailyQuota(userId: string | undefined, namespace: str
     const key = `${namespace}:${userId}:${day}`;
     const current = Number((await store.get(key)) || 0);
     if (current >= limit) {
-      return { ok: false, status: 429, message: `You've reached today's free limit of ${limit}. It resets tomorrow — upgrade for more.` };
+      return {
+        ok: false,
+        status: 429,
+        message: `You've reached today's limit of ${limit}. Your daily quota will reset at midnight UTC.`,
+      };
     }
     await store.set(key, String(current + 1));
     return { ok: true };
@@ -50,15 +54,27 @@ export async function checkDailyQuota(userId: string | undefined, namespace: str
 }
 
 // Reject obvious cross-origin / off-site callers. Same-origin browser requests
-// (the SPA) always pass; requests with no Origin are allowed (not hard-blocked).
-export function isAllowedOrigin(req: Request): boolean {
-  const origin = req.headers.get("origin");
+// (the SPA), the canonical production domain, and localhost dev always pass.
+export function isAllowedOrigin(req: any): boolean {
+  let origin: string | null = null;
+  if (typeof req.headers?.get === "function") {
+    origin = req.headers.get("origin");
+  } else if (req.headers && typeof req.headers === "object") {
+    origin = req.headers["origin"] || null;
+  }
+
   if (!origin) return true;
   try {
     const originHost = new URL(origin).host;
-    const selfHost = new URL(req.url).host;
-    return originHost === selfHost || originHost.endsWith(".netlify.app");
+    const canonicalHost = "si-prompt-architect.netlify.app";
+    return (
+      originHost === canonicalHost ||
+      originHost.endsWith(".netlify.app") ||
+      originHost.startsWith("localhost:") ||
+      originHost.startsWith("127.0.0.1:")
+    );
   } catch {
     return true;
   }
 }
+

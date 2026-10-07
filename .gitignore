@@ -28,3 +28,7 @@ nvidia-flux-test.*
 
 # Local Netlify folder
 .netlify
+
+# Kilo AI worktrees
+.kilo
+

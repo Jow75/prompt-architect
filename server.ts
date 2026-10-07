@@ -3,6 +3,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { handleGenerateDescription, handleGenerateImage } from "./api/handlers";
+import { requireUser } from "./api/auth";
+import { isAllowedOrigin } from "./api/access";
 
 // Load environment variables from .env.local or .env
 dotenv.config({ path: path.join(process.cwd(), ".env.local") });
@@ -13,18 +15,36 @@ app.use(express.json({ limit: "10mb" }));
 
 const PORT = 3000;
 
-// The actual provider logic lives in api/handlers.ts so it can be shared with
-// the Netlify serverless functions (netlify/functions/*). These Express routes
-// are only used for local development (`npm run dev`).
+// Security & Authentication guard for local development to mirror production Netlify Functions.
+const authGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!isAllowedOrigin(req)) {
+    return res.status(403).json({ error: "Forbidden: Origin not allowed" });
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+  const isSupabaseConfigured = Boolean(
+    supabaseUrl && supabaseKey && !supabaseUrl.includes("placeholder")
+  );
+
+  if (isSupabaseConfigured) {
+    const user = await requireUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Please sign in to use this." });
+    }
+    (req as any).user = user;
+  }
+  next();
+};
 
 // 1. Scene description generation
-app.post("/api/generate-description", async (req, res) => {
+app.post("/api/generate-description", authGuard, async (req, res) => {
   const result = await handleGenerateDescription(req.body || {});
   res.status(result.status).json(result.body);
 });
 
 // 2. Image generation
-app.post("/api/generate-image", async (req, res) => {
+app.post("/api/generate-image", authGuard, async (req, res) => {
   const result = await handleGenerateImage(req.body || {});
   res.status(result.status).json(result.body);
 });

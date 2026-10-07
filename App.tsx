@@ -82,13 +82,45 @@ const EXAMPLE_PROMPT: PromptData = {
 const App: React.FC = () => {
     const [session, setSession] = useState<Session | null>(null);
     const [authReady, setAuthReady] = useState(false);
+    const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot-password' | 'update-password'>('signin');
+    const [authError, setAuthError] = useState<string | null>(null);
 
     useEffect(() => {
-        supabase.auth.getSession().then(({ data }) => {
-            setSession(data.session);
-            setAuthReady(true);
+        // Parse URL hash / query parameters for password recovery or OAuth error feedback
+        const hash = window.location.hash || '';
+        const search = window.location.search || '';
+        const combined = hash.startsWith('#') ? hash.slice(1) : search.startsWith('?') ? search.slice(1) : '';
+        const params = new URLSearchParams(combined);
+
+        if (hash.includes('type=recovery') || search.includes('type=recovery')) {
+            setAuthMode('update-password');
+        }
+
+        const errDesc = params.get('error_description');
+        if (errDesc) {
+            setAuthError(decodeURIComponent(errDesc.replace(/\+/g, ' ')));
+        }
+
+        // Initialize session safely without unhandled promise rejections
+        supabase.auth.getSession()
+            .then(({ data }) => {
+                setSession(data?.session ?? null);
+            })
+            .catch((err) => {
+                console.warn('Initial session check failed:', err);
+                setSession(null);
+            })
+            .finally(() => {
+                setAuthReady(true);
+            });
+
+        const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+            setSession(s);
+            if (event === 'PASSWORD_RECOVERY') {
+                setAuthMode('update-password');
+            }
         });
-        const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+
         return () => sub.subscription.unsubscribe();
     }, []);
 
@@ -173,9 +205,23 @@ const App: React.FC = () => {
     };
 
     const handleFile = (file?: File) => {
-        if (!file || !file.type.startsWith('image/')) return;
+        if (!file) return;
+        const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!validTypes.includes(file.type)) {
+            setError('Please upload a valid image file (JPEG, PNG, or WebP).');
+            return;
+        }
+        // Limit upload to 5MB to prevent browser tab memory exhaustion
+        const MAX_SIZE_BYTES = 5 * 1024 * 1024;
+        if (file.size > MAX_SIZE_BYTES) {
+            setError('Image file is too large. Maximum allowed size is 5MB.');
+            return;
+        }
+
+        setError(null);
         const reader = new FileReader();
         reader.onload = () => setEditImage(reader.result as string);
+        reader.onerror = () => setError('Failed to read image file. Please try another image.');
         reader.readAsDataURL(file);
     };
 
@@ -225,7 +271,13 @@ const App: React.FC = () => {
     }
 
     if (!session) {
-        return <LoginScreen />;
+        return (
+            <LoginScreen
+                initialMode={authMode}
+                initialError={authError}
+                onPasswordUpdated={() => setAuthMode('signin')}
+            />
+        );
     }
 
     return (

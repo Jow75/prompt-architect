@@ -16,12 +16,13 @@ export async function generateVividDescription(
     prompt: string,
     model: string = "auto",
     task: "generate" | "edit" = "generate",
+    provider: string = "auto",
 ): Promise<{ description: string; provider: string; model: string }> {
     try {
         const response = await fetch("/api/generate-description", {
             method: "POST",
             headers: await authedHeaders(),
-            body: JSON.stringify({ prompt, provider: "nvidia", model, task }),
+            body: JSON.stringify({ prompt, provider, model, task }),
         });
 
         if (!response.ok) {
@@ -32,7 +33,7 @@ export async function generateVividDescription(
         const data = await response.json();
         return {
             description: data.description,
-            provider: data.provider || "nvidia",
+            provider: data.provider || "auto",
             model: data.model || "",
         };
     } catch (error: any) {
@@ -46,12 +47,13 @@ export async function generateImage(
     model: string = "auto",
     aspectRatio: string = "1:1",
     seed?: number,
+    provider: string = "auto",
 ): Promise<{ image: string; sanitizedPrompt: string; provider: string; model: string }> {
     try {
         const response = await fetch("/api/generate-image", {
             method: "POST",
             headers: await authedHeaders(),
-            body: JSON.stringify({ prompt, provider: "nvidia", model, aspectRatio, seed }),
+            body: JSON.stringify({ prompt, provider, model, aspectRatio, seed }),
         });
 
         if (!response.ok) {
