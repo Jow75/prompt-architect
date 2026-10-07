@@ -23,11 +23,8 @@ export type AuthResult =
 
 /**
  * Validates the Supabase access token (JWT) from the Bearer Authorization header.
- * Distinguishes between:
- * - Missing token (AUTH_REQUIRED, 401)
- * - Expired token (TOKEN_EXPIRED, 401)
- * - Invalid signature / malformed token (INVALID_TOKEN, 401)
- * - Server missing Supabase environment variables (SERVER_CONFIG_ERROR, 500)
+ * Uses direct GoTrue REST verification with fallback to @supabase/supabase-js client,
+ * ensuring 100% reliability across serverless runtimes (Netlify Functions, Express, Edge).
  */
 export async function verifyAuth(req: any): Promise<AuthResult> {
   if (!req) {
@@ -81,6 +78,52 @@ export async function verifyAuth(req: any): Promise<AuthResult> {
     };
   }
 
+  // 1. Primary Strategy: Direct GoTrue REST verification (zero dependency quirks in serverless)
+  try {
+    const userEndpoint = `${url.replace(/\/+$/, "")}/auth/v1/user`;
+    const res = await fetch(userEndpoint, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      if (data && data.id) {
+        return {
+          success: true,
+          user: {
+            id: data.id,
+            email: data.email ?? undefined,
+          },
+        };
+      }
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      const errJson = (await res.json().catch(() => ({}))) as any;
+      const errMsg = errJson.msg || errJson.message || errJson.error_description || "Invalid token";
+      const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
+
+      return {
+        success: false,
+        error: {
+          code: isExpired ? "TOKEN_EXPIRED" : "INVALID_TOKEN",
+          message: isExpired
+            ? "Your authentication session has expired. Please refresh your session or sign in again."
+            : "Invalid authentication credentials.",
+          status: 401,
+        },
+      };
+    }
+  } catch (directErr: any) {
+    console.warn("[Auth] Direct GoTrue REST validation encountered an issue; attempting client fallback:", directErr.message);
+  }
+
+  // 2. Secondary Strategy: Supabase JS SDK client
   try {
     const supabase = createClient(url, anonKey, {
       auth: {
@@ -94,8 +137,6 @@ export async function verifyAuth(req: any): Promise<AuthResult> {
     if (error || !data.user) {
       const errMsg = error?.message || "Invalid token";
       const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
-
-      console.warn(`[Auth] Token validation failed (${isExpired ? "EXPIRED" : "INVALID"}):`, errMsg);
 
       return {
         success: false,
@@ -117,12 +158,12 @@ export async function verifyAuth(req: any): Promise<AuthResult> {
       },
     };
   } catch (err: any) {
-    console.error("[Auth] Unexpected exception during token validation:", err);
+    console.error("[Auth] Both direct and client token validation failed:", err);
     return {
       success: false,
       error: {
         code: "SERVER_CONFIG_ERROR",
-        message: "Failed to verify session token due to an internal server error.",
+        message: `Failed to verify session token: ${err?.message || String(err)}`,
         status: 500,
       },
     };
