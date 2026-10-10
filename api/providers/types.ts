@@ -1,12 +1,13 @@
+import type { Deadline } from "../deadline";
+
 export interface ImageGenerationOptions {
   prompt: string;
-  negativePrompt?: string;
-  width?: number;
-  height?: number;
   aspectRatio?: string;
   seed?: number;
   steps?: number;
   model?: string;
+  /** Shared request time budget; every attempt must fit inside it. */
+  deadline?: Deadline;
 }
 
 export interface ImageGenerationResult {
@@ -14,14 +15,8 @@ export interface ImageGenerationResult {
   sanitizedPrompt: string;
   provider: string;
   model: string;
-}
-
-export interface ImageProviderStatus {
-  name: string;
-  displayName: string;
-  isConfigured: boolean;
-  supportedModels: string[];
-  defaultModel: string;
+  /** Upstream request id, for correlating with the provider's logs. */
+  providerRequestId?: string;
 }
 
 export interface ImageProvider {

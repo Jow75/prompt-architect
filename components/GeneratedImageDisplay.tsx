@@ -85,7 +85,7 @@ export const GeneratedImageDisplay: React.FC<GeneratedImageDisplayProps> = ({
                             <a
                                 href={dataUrl(img)}
                                 download={`prompt-architect-${i + 1}.${ext(img)}`}
-                                className="absolute right-2 top-2 inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/80 px-2.5 py-1.5 text-xs font-medium text-slate-200 opacity-0 transition group-hover:opacity-100"
+                                className="absolute right-2 top-2 inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/80 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
                                 aria-label="Download image"
                             >
                                 <DownloadIcon />

@@ -26,30 +26,19 @@ const fieldClass =
 const selectClass =
     'w-full cursor-pointer rounded-xl border border-white/10 bg-slate-950/60 p-2.5 text-sm text-slate-200 transition focus:border-violet-500/50 focus:outline-none focus:ring-2 focus:ring-violet-500/30';
 
-// Live, verified models available in the system
+// Models the server accepts (see api/handlers.ts and api/providers/nvidia.ts).
+// Timings were measured on this NVIDIA account.
 const TEXT_MODELS = [
-    { id: 'auto', label: 'Auto (Recommended - Llama 3.2 11B)' },
-    { id: 'meta/llama-3.2-11b-vision-instruct', label: 'NVIDIA Llama 3.2 11B (Fast ~3s)' },
-    { id: 'meta/llama-3.2-90b-vision-instruct', label: 'NVIDIA Llama 3.2 90B Vision' },
-    { id: 'openai/gpt-oss-20b', label: 'NVIDIA GPT-OSS 20B' },
-    { id: 'gemini-2.5-flash', label: 'Google Gemini 2.5 Flash' },
-    { id: 'gpt-4o-mini', label: 'OpenAI GPT-4o Mini' },
+    { id: 'auto', label: 'Auto (Recommended - Nemotron 3 Super)' },
+    { id: 'nvidia/nemotron-3-super-120b-a12b', label: 'NVIDIA Nemotron 3 Super (Fast ~3s)' },
+    { id: 'openai/gpt-oss-20b', label: 'NVIDIA GPT-OSS 20B (~10-15s)' },
+    { id: 'meta/llama-3.2-11b-vision-instruct', label: 'NVIDIA Llama 3.2 11B (Slow, may time out)' },
 ];
 
 const IMAGE_MODELS = [
     { id: 'auto', label: 'Auto (Recommended - FLUX.2 Klein 4B)' },
-    { id: 'flux.2-klein-4b', label: 'NVIDIA FLUX.2 Klein 4B (Fast ~2s)' },
-    { id: 'flux.1-schnell', label: 'NVIDIA FLUX.1 Schnell' },
-    { id: 'flux.1-dev', label: 'NVIDIA FLUX.1 Dev (Quality)' },
-    { id: 'dall-e-3', label: 'OpenAI DALL-E 3' },
-    { id: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' },
-];
-
-const PROVIDER_OPTIONS = [
-    { id: 'auto', label: 'Auto (NVIDIA First + Fallback)' },
-    { id: 'nvidia', label: 'NVIDIA' },
-    { id: 'openai', label: 'OpenAI' },
-    { id: 'gemini', label: 'Google Gemini' },
+    { id: 'flux.2-klein-4b', label: 'NVIDIA FLUX.2 Klein 4B (Fast ~3s)' },
+    { id: 'flux.1-dev', label: 'NVIDIA FLUX.1 Dev (Quality, slow - may time out)' },
 ];
 
 const ASPECT_RATIOS = [
@@ -63,16 +52,10 @@ const ASPECT_RATIOS = [
 // Short labels for the result badges.
 const MODEL_BADGE: Record<string, string> = {
     'flux.2-klein-4b': 'FLUX.2 Klein',
-    'flux.1-schnell': 'FLUX.1 Schnell',
     'flux.1-dev': 'FLUX.1 Dev',
-    'meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B',
-    'meta/llama-3.2-90b-vision-instruct': 'Llama 3.2 90B',
-    'nvidia/nemotron-3-ultra-550b-a55b': 'Nemotron 550B',
+    'nvidia/nemotron-3-super-120b-a12b': 'Nemotron 3 Super',
     'openai/gpt-oss-20b': 'GPT-OSS 20B',
-    'gemini-2.5-flash': 'Gemini Flash',
-    'gpt-4o-mini': 'GPT-4o Mini',
-    'dall-e-3': 'DALL-E 3',
-    'gemini-2.5-flash-image': 'Gemini Image',
+    'meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B',
 };
 const badge = (id: string) => MODEL_BADGE[id] || (id && id !== 'auto' ? id : '');
 
@@ -146,15 +129,14 @@ const App: React.FC = () => {
 
     const [promptData, setPromptData] = useState<PromptData>(EMPTY_PROMPT);
 
-    const [textProvider, setTextProvider] = useState<string>('auto');
     const [textModel, setTextModel] = useState<string>('auto');
-    const [imageProvider, setImageProvider] = useState<string>('auto');
     const [imageModel, setImageModel] = useState<string>('auto');
     const [aspectRatio, setAspectRatio] = useState<string>('1:1');
 
     const [activeTextModel, setActiveTextModel] = useState<string>('');
     const [activeImageModel, setActiveImageModel] = useState<string>('');
     const [description, setDescription] = useState<string>('');
+    const [descriptionTask, setDescriptionTask] = useState<'generate' | 'edit'>('generate');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [textLoadingStep, setTextLoadingStep] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
@@ -167,6 +149,19 @@ const App: React.FC = () => {
 
     const [editImage, setEditImage] = useState<string | null>(null);
     const [editInstruction, setEditInstruction] = useState<string>('');
+
+    // Shows a failed request's message. When the server no longer accepts the
+    // session, drop it locally so the login screen appears instead of leaving a
+    // "please sign in" error inside the signed-in view.
+    const reportRequestError = (err: unknown, setMessage: (message: string) => void) => {
+        const formatted = formatUserFacingError(err);
+        setMessage(formatted);
+        if (err instanceof AuthRequiredError || err instanceof TokenExpiredError) {
+            setAuthError(formatted);
+            setAuthMode('signin');
+            supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+        }
+    };
 
     const handleInputChange = useCallback((field: keyof PromptData, value: string) => {
         setPromptData(prev => ({ ...prev, [field]: value }));
@@ -202,18 +197,13 @@ const App: React.FC = () => {
                 generatedPrompt,
                 textModel,
                 'generate',
-                textProvider,
                 (step) => setTextLoadingStep(step)
             );
+            setDescriptionTask('generate');
             setDescription(result.description);
             setActiveTextModel(result.model || textModel);
-        } catch (err: any) {
-            const formatted = formatUserFacingError(err);
-            setError(formatted);
-            if (err instanceof AuthRequiredError || err instanceof TokenExpiredError) {
-                setAuthError(formatted);
-                setAuthMode('signin');
-            }
+        } catch (err: unknown) {
+            reportRequestError(err, setError);
         } finally {
             setIsLoading(false);
             setTextLoadingStep('');
@@ -241,7 +231,6 @@ const App: React.FC = () => {
                     imageModel,
                     aspectRatio,
                     Math.floor(Math.random() * 1_000_000_000),
-                    imageProvider,
                     (step) => setImageLoadingStep(step)
                 ),
             );
@@ -253,13 +242,8 @@ const App: React.FC = () => {
             }
             setGeneratedImages(ok.map(v => v.image));
             setActiveImageModel(ok[0].model || imageModel);
-        } catch (err: any) {
-            const formatted = formatUserFacingError(err);
-            setImageError(formatted);
-            if (err instanceof AuthRequiredError || err instanceof TokenExpiredError) {
-                setAuthError(formatted);
-                setAuthMode('signin');
-            }
+        } catch (err: unknown) {
+            reportRequestError(err, setImageError);
         } finally {
             setIsImageLoading(false);
             setImageLoadingStep('');
@@ -301,18 +285,13 @@ const App: React.FC = () => {
                 editInstruction,
                 textModel,
                 'edit',
-                textProvider,
                 (step) => setTextLoadingStep(step)
             );
+            setDescriptionTask('edit');
             setDescription(result.description);
             setActiveTextModel(result.model || textModel);
-        } catch (err: any) {
-            const formatted = formatUserFacingError(err);
-            setError(formatted);
-            if (err instanceof AuthRequiredError || err instanceof TokenExpiredError) {
-                setAuthError(formatted);
-                setAuthMode('signin');
-            }
+        } catch (err: unknown) {
+            reportRequestError(err, setError);
         } finally {
             setIsLoading(false);
             setTextLoadingStep('');
@@ -409,49 +388,46 @@ const App: React.FC = () => {
                         <PromptInputSection title="Negative Prompt">
                             {field('negativePrompt', 'Things to avoid  ·  e.g. blurry, watermark, extra limbs, text, low quality')}
                             <SuggestionChips value={promptData.negativePrompt} options={NEGATIVE_OPTIONS} onChange={(v) => handleInputChange('negativePrompt', v)} />
+                            <p className="text-[11px] leading-relaxed text-slate-500">
+                                Included in your copy-ready prompt for other tools. The FLUX preview here does not support negative prompts.
+                            </p>
                         </PromptInputSection>
 
-                        <PromptInputSection title="Provider & Model Options">
+                        <PromptInputSection title="Model Options">
                             <div className="flex flex-col gap-4">
                                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                     <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-medium text-slate-500">Image provider</label>
-                                        <select value={imageProvider} onChange={(e) => setImageProvider(e.target.value)} className={selectClass}>
-                                            {PROVIDER_OPTIONS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                                        <label htmlFor="image-model" className="text-xs font-medium text-slate-500">Image model</label>
+                                        <select id="image-model" value={imageModel} onChange={(e) => setImageModel(e.target.value)} className={selectClass}>
+                                            {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                                         </select>
                                     </div>
                                     <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-medium text-slate-500">Image model</label>
-                                        <select value={imageModel} onChange={(e) => setImageModel(e.target.value)} className={selectClass}>
-                                            {IMAGE_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                                        <label htmlFor="text-model" className="text-xs font-medium text-slate-500">Text enhancement model</label>
+                                        <select id="text-model" value={textModel} onChange={(e) => setTextModel(e.target.value)} className={selectClass}>
+                                            {TEXT_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                                         </select>
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                     <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-medium text-slate-500">Text enhancement model</label>
-                                        <select value={textModel} onChange={(e) => setTextModel(e.target.value)} className={selectClass}>
-                                            {TEXT_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-                                        </select>
-                                    </div>
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-medium text-slate-500">Aspect ratio</label>
-                                        <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className={selectClass}>
+                                        <label htmlFor="aspect-ratio" className="text-xs font-medium text-slate-500">Aspect ratio</label>
+                                        <select id="aspect-ratio" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className={selectClass}>
                                             {ASPECT_RATIOS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                                         </select>
                                     </div>
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-medium text-slate-500">Number of image variations</label>
-                                    <select value={numImages} onChange={(e) => setNumImages(Number(e.target.value))} className={selectClass}>
-                                        <option value={1}>1 image</option>
-                                        <option value={2}>2 variations</option>
-                                        <option value={3}>3 variations</option>
-                                        <option value={4}>4 variations</option>
-                                    </select>
+                                    <div className="flex flex-col gap-1.5">
+                                        <label htmlFor="num-images" className="text-xs font-medium text-slate-500">Number of image variations</label>
+                                        <select id="num-images" value={numImages} onChange={(e) => setNumImages(Number(e.target.value))} className={selectClass}>
+                                            <option value={1}>1 image</option>
+                                            <option value={2}>2 variations</option>
+                                            <option value={3}>3 variations</option>
+                                            <option value={4}>4 variations</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 <p className="rounded-lg border border-white/5 bg-slate-950/50 p-2.5 text-[11px] leading-relaxed text-slate-500">
-                                    Primary provider is <span className="text-slate-300 font-medium">NVIDIA FLUX</span> (with automatic fallback to configured backups). All keys remain protected server-side.
+                                    Images and text run on <span className="text-slate-300 font-medium">NVIDIA</span> models. Requests are capped at about 25 seconds; if a slow model runs out of time, try again or switch to Auto. All keys remain protected server-side.
                                 </p>
                             </div>
                         </PromptInputSection>
@@ -529,7 +505,7 @@ const App: React.FC = () => {
                             error={error}
                             activeProvider={badge(activeTextModel)}
                             onClear={() => { setDescription(''); setError(null); setActiveTextModel(''); }}
-                            onUseForGeneration={(prompt) => handleGenerateImage(prompt)}
+                            onUseForGeneration={descriptionTask === 'generate' ? (prompt) => handleGenerateImage(prompt) : undefined}
                         />
                         <GeneratedImageDisplay
                             images={generatedImages}

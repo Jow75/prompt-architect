@@ -14,6 +14,10 @@ import {
   PromptArchitectError,
 } from './errors';
 
+// The server answers within ~27s by design; anything longer means the platform
+// cut the request off, so stop waiting and tell the user.
+const CLIENT_TIMEOUT_MS = 35_000;
+
 async function buildAuthHeaders(forceRefresh = false): Promise<Record<string, string>> {
   const token = await getValidAccessToken(forceRefresh);
   return {
@@ -52,6 +56,11 @@ function parseApiError(status: number, data: any): Error {
     return new ProviderUnavailableError(message || 'The AI generation provider is temporarily unavailable.');
   }
 
+  // 502/504 come from the hosting gateway (not our API) when a request runs too long.
+  if (status === 502 || status === 504) {
+    return new ProviderUnavailableError('The request took too long and was cut off. Please try again.');
+  }
+
   if (status === 500 && code === 'SERVER_CONFIG_ERROR') {
     return new ServerConfigError(message || 'Server configuration error. Please contact support.');
   }
@@ -61,6 +70,23 @@ function parseApiError(status: number, data: any): Error {
     code || 'INTERNAL_ERROR',
     status
   );
+}
+
+async function postJson(url: string, headers: Record<string, string>, body: Record<string, any>): Promise<Response> {
+  try {
+    return await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS),
+    });
+  } catch (netErr: any) {
+    console.error(`[API] Network error while calling ${url}:`, netErr);
+    if (netErr?.name === 'TimeoutError' || netErr?.name === 'AbortError') {
+      throw new NetworkError('The server took too long to respond. Please try again.');
+    }
+    throw new NetworkError('Unable to reach the server. Please check your internet connection.');
+  }
 }
 
 /**
@@ -90,43 +116,23 @@ async function authedApiRequest<T>(
   }
 
   if (onProgress) onProgress('Sending request...');
+  let response = await postJson(url, headers, body);
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-  } catch (netErr: any) {
-    console.error(`[API] Network error while calling ${url}:`, netErr);
-    throw new NetworkError('Unable to reach the server. Please check your internet connection.');
-  }
-
-  // Handle Token Expired with automatic single retry
+  // Handle Token Expired with a single refresh-and-retry
   if (response.status === 401) {
     const errData = await response.json().catch(() => ({}));
-    const code = errData?.error?.code;
-
-    if (code === 'TOKEN_EXPIRED') {
-      console.log('[API] Received TOKEN_EXPIRED. Attempting session refresh and retry...');
-      if (onProgress) onProgress('Refreshing authentication session...');
-
-      const refreshedHeaders = await buildAuthHeaders(true);
-      if (refreshedHeaders.Authorization) {
-        try {
-          response = await fetch(url, {
-            method: 'POST',
-            headers: refreshedHeaders,
-            body: JSON.stringify(body),
-          });
-        } catch {
-          throw new NetworkError('Connection interrupted during request retry.');
-        }
-      }
-    } else {
+    if (errData?.error?.code !== 'TOKEN_EXPIRED') {
       throw parseApiError(response.status, errData);
     }
+
+    console.log('[API] Received TOKEN_EXPIRED. Attempting session refresh and retry...');
+    if (onProgress) onProgress('Refreshing authentication session...');
+
+    const refreshedHeaders = await buildAuthHeaders(true);
+    if (!refreshedHeaders.Authorization) {
+      throw new TokenExpiredError('Your session has expired. Please sign in again.');
+    }
+    response = await postJson(url, refreshedHeaders, body);
   }
 
   if (!response.ok) {
@@ -142,14 +148,13 @@ export async function generateVividDescription(
   prompt: string,
   model: string = 'auto',
   task: 'generate' | 'edit' = 'generate',
-  provider: string = 'auto',
   onProgress?: (stage: string) => void
 ): Promise<{ description: string; provider: string; model: string }> {
   try {
     if (onProgress) onProgress('Preparing prompt...');
     const data = await authedApiRequest<any>(
       '/api/generate-description',
-      { prompt, provider, model, task },
+      { prompt, model, task },
       onProgress
     );
 
@@ -169,14 +174,13 @@ export async function generateImage(
   model: string = 'auto',
   aspectRatio: string = '1:1',
   seed?: number,
-  provider: string = 'auto',
   onProgress?: (stage: string) => void
 ): Promise<{ image: string; sanitizedPrompt: string; provider: string; model: string }> {
   try {
     if (onProgress) onProgress('Preparing prompt...');
     const data = await authedApiRequest<any>(
       '/api/generate-image',
-      { prompt, provider, model, aspectRatio, seed },
+      { prompt, model, aspectRatio, seed },
       onProgress
     );
 

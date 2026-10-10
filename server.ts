@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { handleGenerateDescription, handleGenerateImage } from "./api/handlers";
 import { verifyAuth } from "./api/auth";
 import { isAllowedOrigin } from "./api/access";
+import { createDeadline } from "./api/deadline";
 
 // Load environment variables from .env.local or .env
 dotenv.config({ path: path.join(process.cwd(), ".env.local") });
@@ -15,7 +16,9 @@ app.use(express.json({ limit: "10mb" }));
 
 const PORT = 3000;
 
-// Security & Authentication guard for local development matching production Netlify Functions.
+// Origin + authentication guard for local development. The hourly cap and daily
+// quota are NOT applied here: they live in Netlify Blobs and only run in the
+// deployed functions (see api/guard.ts).
 const authGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (!isAllowedOrigin(req)) {
     return res.status(403).json({
@@ -32,12 +35,9 @@ const authGuard = async (req: express.Request, res: express.Response, next: expr
 
   if (isSupabaseConfigured) {
     const authResult = await verifyAuth(req);
-    if (!authResult.success) {
-      const authErr = authResult.error || { code: "AUTH_REQUIRED", message: "Unauthorized", status: 401 };
-      return res.status(authErr.status).json({
-        success: false,
-        error: authErr,
-      });
+    if (authResult.success === false) {
+      const { status, code, message } = authResult.error;
+      return res.status(status).json({ success: false, error: { code, message } });
     }
     (req as any).user = authResult.user;
   }
@@ -46,13 +46,13 @@ const authGuard = async (req: express.Request, res: express.Response, next: expr
 
 // 1. Scene description generation
 app.post("/api/generate-description", authGuard, async (req, res) => {
-  const result = await handleGenerateDescription(req.body || {});
+  const result = await handleGenerateDescription(req.body || {}, { deadline: createDeadline() });
   res.status(result.status).json(result.body);
 });
 
 // 2. Image generation
 app.post("/api/generate-image", authGuard, async (req, res) => {
-  const result = await handleGenerateImage(req.body || {});
+  const result = await handleGenerateImage(req.body || {}, { deadline: createDeadline() });
   res.status(result.status).json(result.body);
 });
 
@@ -70,7 +70,8 @@ async function bootstrap() {
     const distPath = path.join(process.cwd(), "dist");
 
     app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
+    // Express 5 no longer accepts a bare "*" path, so the SPA fallback is plain middleware.
+    app.use((_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

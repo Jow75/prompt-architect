@@ -1,15 +1,18 @@
-import type { ImageProvider, ImageGenerationOptions, ImageGenerationResult, ImageProviderStatus } from "./types";
+import type { ImageProvider, ImageGenerationOptions, ImageGenerationResult } from "./types";
 import { NvidiaImageProvider } from "./nvidia";
-import { OpenAIImageProvider } from "./openai";
-import { GeminiImageProvider } from "./gemini";
+import { ProviderError } from "../errors";
 
+// Image providers available to the app. NVIDIA FLUX is the only one: the former
+// OpenAI (dall-e-3) and Gemini (gemini-2.5-flash-image) providers were removed
+// after both models were retired upstream. To add a provider, implement
+// ImageProvider and register it here; retries stay inside each provider so one
+// request never fans out across providers and outruns the time budget.
 export class ImageProviderRegistry {
   private providers: Map<string, ImageProvider> = new Map();
+  private defaultId = "nvidia";
 
   constructor() {
     this.register(new NvidiaImageProvider());
-    this.register(new OpenAIImageProvider());
-    this.register(new GeminiImageProvider());
   }
 
   public register(provider: ImageProvider): void {
@@ -20,83 +23,17 @@ export class ImageProviderRegistry {
     return this.providers.get(id);
   }
 
-  /**
-   * Returns metadata and active availability for all providers.
-   */
-  public getStatusList(): ImageProviderStatus[] {
-    return Array.from(this.providers.values()).map((p) => ({
-      name: p.id,
-      displayName: p.displayName,
-      isConfigured: p.isConfigured(),
-      supportedModels: p.getSupportedModels(),
-      defaultModel: p.getDefaultModel(),
-    }));
+  /** Every image model the server accepts, across providers. */
+  public getSupportedModels(): string[] {
+    return Array.from(this.providers.values()).flatMap((p) => p.getSupportedModels());
   }
 
-  /**
-   * Executes image generation according to NVIDIA-first strategy with strict fallback guards.
-   *
-   * Fallback Rules (Section 12 of Engineering Directive):
-   * - Preferred provider is attempted first (default: NVIDIA).
-   * - Fallback happens ONLY on genuine provider/network/server errors (5xx, timeouts).
-   * - NEVER fall back on:
-   *   - Safety filter rejections (422 / content policy)
-   *   - Invalid user prompts / client parameters
-   *   - Authentication / quota failures
-   */
-  public async generateImageWithFallback(
-    options: ImageGenerationOptions,
-    preferredProvider = "auto"
-  ): Promise<ImageGenerationResult> {
-    const sequence: ImageProvider[] = [];
-
-    const nvidia = this.providers.get("nvidia");
-    const openai = this.providers.get("openai");
-    const gemini = this.providers.get("gemini");
-
-    if (preferredProvider !== "auto") {
-      const selected = this.providers.get(preferredProvider);
-      if (selected && selected.isConfigured()) {
-        sequence.push(selected);
-      } else if (selected && !selected.isConfigured()) {
-        throw new Error(`The requested provider '${selected.displayName}' is not configured on the server.`);
-      }
-    } else {
-      // Auto / NVIDIA-First sequence
-      if (nvidia && nvidia.isConfigured()) sequence.push(nvidia);
-      if (openai && openai.isConfigured()) sequence.push(openai);
-      if (gemini && gemini.isConfigured()) sequence.push(gemini);
+  public async generateImage(options: ImageGenerationOptions): Promise<ImageGenerationResult> {
+    const provider = this.providers.get(this.defaultId);
+    if (!provider || !provider.isConfigured()) {
+      throw new ProviderError("config", "No image generation provider is configured on this server. Please verify the server API key.");
     }
-
-    if (sequence.length === 0) {
-      throw new Error("No image generation provider is currently configured on this server. Please verify server API keys.");
-    }
-
-    let lastError: Error | null = null;
-
-    for (let i = 0; i < sequence.length; i++) {
-      const provider = sequence[i];
-      try {
-        console.log(`[ProviderRegistry] Dispatching to provider: ${provider.displayName}...`);
-        const result = await provider.generate(options);
-        return result;
-      } catch (err: any) {
-        lastError = err;
-
-        // CRITICAL GUARD: Do NOT fall back on content safety rejections or bad client input
-        if (err.isSafetyViolation || err.isClientError) {
-          console.warn(`[ProviderRegistry] Non-retryable error (${err.isSafetyViolation ? 'safety' : 'client input'}) in ${provider.displayName}; stopping fallback sequence.`);
-          throw err;
-        }
-
-        const isLast = i === sequence.length - 1;
-        if (!isLast) {
-          console.warn(`[ProviderRegistry] Provider ${provider.displayName} failed (${err.message}). Trying backup provider...`);
-        }
-      }
-    }
-
-    throw lastError || new Error("All available image generation providers failed to fulfill the request.");
+    return provider.generate(options);
   }
 }
 

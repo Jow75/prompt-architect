@@ -9,13 +9,12 @@
   NODE_VERSION = "20"
 
 [functions]
-  # Bundle functions (and their node_modules, e.g. @google/genai) with esbuild.
+  # Bundle functions (and their node_modules) with esbuild.
   node_bundler = "esbuild"
 
-[functions."generate-image"]
-  # Image generation is the slow path. Raise the timeout toward the plan maximum.
-  # Free/Starter is capped at 10s regardless; paid plans honor up to 26s.
-  timeout = 26
+# Synchronous functions on this site are terminated at ~30s (measured Oct 2026;
+# not configurable from this file). The API keeps every request inside a 25s
+# budget instead: see api/deadline.ts.
 
 # --- Routing (evaluated top to bottom; first match wins) ---
 

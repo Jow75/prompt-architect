@@ -1,5 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
-
 export interface AuthUser {
   id: string;
   email?: string;
@@ -9,6 +7,7 @@ export type AuthFailureCode =
   | "AUTH_REQUIRED"
   | "TOKEN_EXPIRED"
   | "INVALID_TOKEN"
+  | "AUTH_UNAVAILABLE"
   | "SERVER_CONFIG_ERROR";
 
 export interface AuthErrorDetails {
@@ -21,159 +20,73 @@ export type AuthResult =
   | { success: true; user: AuthUser; error?: undefined }
   | { success: false; error: AuthErrorDetails; user?: undefined };
 
+const fail = (code: AuthFailureCode, status: number, message: string): AuthResult => ({
+  success: false,
+  error: { code, message, status },
+});
+
+const AUTH_UNAVAILABLE = () =>
+  fail("AUTH_UNAVAILABLE", 503, "The sign-in service is temporarily unreachable. Please try again in a moment.");
+
 /**
- * Validates the Supabase access token (JWT) from the Bearer Authorization header.
- * Uses direct GoTrue REST verification with fallback to @supabase/supabase-js client,
- * ensuring 100% reliability across serverless runtimes (Netlify Functions, Express, Edge).
+ * Validates the Supabase access token (JWT) from the Bearer Authorization header
+ * by asking Supabase Auth (GoTrue) who it belongs to. Only an explicit 401/403
+ * from Supabase counts as a bad token; outages and timeouts are reported as 503
+ * so a signed-in user is never told to sign in again because Supabase was slow.
  */
 export async function verifyAuth(req: any): Promise<AuthResult> {
-  if (!req) {
-    return {
-      success: false,
-      error: {
-        code: "AUTH_REQUIRED",
-        message: "No request context provided.",
-        status: 401,
-      },
-    };
-  }
+  if (!req) return fail("AUTH_REQUIRED", 401, "No request context provided.");
 
   let authHeader = "";
   if (typeof req.headers?.get === "function") {
     // Standard Fetch API Headers (Request.headers.get)
-    authHeader = req.headers.get("authorization") || req.headers.get("Authorization") || "";
+    authHeader = req.headers.get("authorization") || "";
   } else if (req.headers && typeof req.headers === "object") {
     // Node.js / Express headers object
     const raw = req.headers["authorization"] || req.headers["Authorization"];
     authHeader = typeof raw === "string" ? raw : "";
   }
 
-  const token = authHeader.toLowerCase().startsWith("bearer ")
-    ? authHeader.slice(7).trim()
-    : "";
-
-  if (!token) {
-    return {
-      success: false,
-      error: {
-        code: "AUTH_REQUIRED",
-        message: "Authentication required. Please sign in to continue.",
-        status: 401,
-      },
-    };
-  }
+  const token = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+  if (!token) return fail("AUTH_REQUIRED", 401, "Authentication required. Please sign in to continue.");
 
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
   if (!url || !anonKey || url.includes("placeholder")) {
     console.error("[Auth] Server environment error: Supabase URL or Anon Key is missing or unconfigured.");
-    return {
-      success: false,
-      error: {
-        code: "SERVER_CONFIG_ERROR",
-        message: "Authentication server is misconfigured. Please verify server environment variables.",
-        status: 500,
-      },
-    };
+    return fail("SERVER_CONFIG_ERROR", 500, "Authentication server is misconfigured. Please verify server environment variables.");
   }
 
-  // 1. Primary Strategy: Direct GoTrue REST verification (zero dependency quirks in serverless)
   try {
-    const userEndpoint = `${url.replace(/\/+$/, "")}/auth/v1/user`;
-    const res = await fetch(userEndpoint, {
+    const res = await fetch(`${url.replace(/\/+$/, "")}/auth/v1/user`, {
       method: "GET",
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${token}`,
-      },
-      signal: AbortSignal.timeout(8000),
+      headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(6000),
     });
 
     if (res.ok) {
-      const data = (await res.json()) as any;
-      if (data && data.id) {
-        return {
-          success: true,
-          user: {
-            id: data.id,
-            email: data.email ?? undefined,
-          },
-        };
+      const data = (await res.json().catch(() => null)) as any;
+      if (data?.id) {
+        return { success: true, user: { id: data.id, email: data.email ?? undefined } };
       }
+      console.warn("[Auth] Supabase returned 200 without a user id.");
+      return AUTH_UNAVAILABLE();
     }
 
     if (res.status === 401 || res.status === 403) {
       const errJson = (await res.json().catch(() => ({}))) as any;
-      const errMsg = errJson.msg || errJson.message || errJson.error_description || "Invalid token";
-      const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
-
-      return {
-        success: false,
-        error: {
-          code: isExpired ? "TOKEN_EXPIRED" : "INVALID_TOKEN",
-          message: isExpired
-            ? "Your authentication session has expired. Please refresh your session or sign in again."
-            : "Invalid authentication credentials.",
-          status: 401,
-        },
-      };
-    }
-  } catch (directErr: any) {
-    console.warn("[Auth] Direct GoTrue REST validation encountered an issue; attempting client fallback:", directErr.message);
-  }
-
-  // 2. Secondary Strategy: Supabase JS SDK client
-  try {
-    const supabase = createClient(url, anonKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
-
-    const { data, error } = await supabase.auth.getUser(token);
-
-    if (error || !data.user) {
-      const errMsg = error?.message || "Invalid token";
-      const isExpired = errMsg.toLowerCase().includes("expired") || errMsg.toLowerCase().includes("exp");
-
-      return {
-        success: false,
-        error: {
-          code: isExpired ? "TOKEN_EXPIRED" : "INVALID_TOKEN",
-          message: isExpired
-            ? "Your authentication session has expired. Please refresh your session or sign in again."
-            : "Invalid authentication credentials.",
-          status: 401,
-        },
-      };
+      const errMsg = String(errJson.msg || errJson.message || errJson.error_description || "");
+      if (/\bexpired\b/i.test(errMsg)) {
+        return fail("TOKEN_EXPIRED", 401, "Your authentication session has expired. Please refresh your session or sign in again.");
+      }
+      return fail("INVALID_TOKEN", 401, "Invalid authentication credentials.");
     }
 
-    return {
-      success: true,
-      user: {
-        id: data.user.id,
-        email: data.user.email ?? undefined,
-      },
-    };
+    console.warn(`[Auth] Supabase auth returned HTTP ${res.status}; treating as unavailable.`);
+    return AUTH_UNAVAILABLE();
   } catch (err: any) {
-    console.error("[Auth] Both direct and client token validation failed:", err);
-    return {
-      success: false,
-      error: {
-        code: "SERVER_CONFIG_ERROR",
-        message: `Failed to verify session token: ${err?.message || String(err)}`,
-        status: 500,
-      },
-    };
+    console.warn("[Auth] Could not reach Supabase auth:", err?.message);
+    return AUTH_UNAVAILABLE();
   }
-}
-
-/**
- * Backwards-compatible helper returning User object or null.
- */
-export async function requireUser(req: any): Promise<AuthUser | null> {
-  const result = await verifyAuth(req);
-  return result.success ? result.user : null;
 }

@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/quota.test.ts",
+    "smoke": "tsx scripts/smoke-test.ts",
     "build:standalone": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs"
   },
   "dependencies": {
-    "@google/genai": "^1.29.0",
     "@netlify/blobs": "^10.7.9",
     "@supabase/supabase-js": "^2.108.1",
     "dotenv": "^17.4.2",

@@ -1,4 +1,6 @@
 import type { ImageProvider, ImageGenerationOptions, ImageGenerationResult } from "./types";
+import { createDeadline, type Deadline } from "../deadline";
+import { ProviderError, isAbortError, isRetryable } from "../errors";
 
 /**
  * NVIDIA's FLUX safety filter signals a blocked prompt by returning a solid black
@@ -13,7 +15,7 @@ function isLikelyFilteredImage(base64: string): boolean {
 
 /**
  * Strips Stable-Diffusion-specific emphasis syntax like ((subject):1.5) or {subject}
- * so FLUX / DALL-E / Gemini receive plain natural language.
+ * so FLUX receives plain natural language.
  */
 function stripEmphasisSyntax(p: string): string {
   let s = p;
@@ -24,7 +26,7 @@ function stripEmphasisSyntax(p: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-const ASPECT_RATIO_DIMENSIONS: Record<string, { width: number; height: number }> = {
+export const ASPECT_RATIO_DIMENSIONS: Record<string, { width: number; height: number }> = {
   "1:1": { width: 1024, height: 1024 },
   "16:9": { width: 1344, height: 768 },
   "9:16": { width: 768, height: 1344 },
@@ -34,15 +36,21 @@ const ASPECT_RATIO_DIMENSIONS: Record<string, { width: number; height: number }>
   "4:3": { width: 1152, height: 896 },
 };
 
+// Per-model attempt policy, sized from measurements on this account:
+//   flux.2-klein-4b  ~3-5s  -> short cap, one retry on a transient failure.
+//   flux.1-dev       ~7-30s -> one attempt that may use almost the whole budget.
+// flux.1-schnell is intentionally absent: it stopped responding on this account.
+const MODELS: Record<string, { capMs: number; attempts: number }> = {
+  "flux.2-klein-4b": { capMs: 12_000, attempts: 2 },
+  "flux.1-dev": { capMs: 23_000, attempts: 1 },
+};
+const DEFAULT_MODEL = "flux.2-klein-4b";
+// A retry is only worth starting if a typical Klein generation still fits.
+const MIN_RETRY_BUDGET_MS = 8_000;
+
 export class NvidiaImageProvider implements ImageProvider {
   public readonly id = "nvidia";
   public readonly displayName = "NVIDIA FLUX";
-
-  private readonly supportedModels = [
-    "flux.2-klein-4b",
-    "flux.1-schnell",
-    "flux.1-dev",
-  ];
 
   public isConfigured(): boolean {
     const key = this.getApiKey();
@@ -50,11 +58,11 @@ export class NvidiaImageProvider implements ImageProvider {
   }
 
   public getSupportedModels(): string[] {
-    return [...this.supportedModels];
+    return Object.keys(MODELS);
   }
 
   public getDefaultModel(): string {
-    return "flux.2-klein-4b";
+    return DEFAULT_MODEL;
   }
 
   private getApiKey(): string | null {
@@ -66,7 +74,7 @@ export class NvidiaImageProvider implements ImageProvider {
   public async generate(options: ImageGenerationOptions): Promise<ImageGenerationResult> {
     const apiKey = this.getApiKey();
     if (!apiKey) {
-      throw new Error("NVIDIA API key is not configured.");
+      throw new ProviderError("config", "The NVIDIA API key is not configured on the server.");
     }
 
     let mainPrompt = options.prompt || "";
@@ -76,132 +84,134 @@ export class NvidiaImageProvider implements ImageProvider {
     }
     const sanitizedPrompt = stripEmphasisSyntax(mainPrompt);
 
-    // Determine dimensions from aspect ratio or options
-    const ratio = options.aspectRatio || "1:1";
-    const defaultDims = ASPECT_RATIO_DIMENSIONS[ratio] || { width: 1024, height: 1024 };
-    const width = options.width || defaultDims.width;
-    const height = options.height || defaultDims.height;
+    const dims = ASPECT_RATIO_DIMENSIONS[options.aspectRatio || "1:1"] || ASPECT_RATIO_DIMENSIONS["1:1"];
 
-    // Normalize requested model
-    const normalize = (m: string) => (m.includes("/") ? m.split("/").pop()! : m).trim();
-    const rawModel = options.model ? normalize(options.model) : "auto";
-
-    // Build list of models to try.
-    // If user asked for a specific model, prioritize it.
-    // Default fast & high quality model for NVIDIA is flux.2-klein-4b (verified working in ~2s).
-    const modelsToTry: string[] = [];
-    if (rawModel !== "auto" && this.supportedModels.includes(rawModel)) {
-      modelsToTry.push(rawModel);
-    } else {
-      modelsToTry.push("flux.2-klein-4b", "flux.1-schnell", "flux.1-dev");
+    const requested = (options.model || "auto").split("/").pop()!.trim();
+    const modelId = requested === "auto" ? DEFAULT_MODEL : requested;
+    const policy = MODELS[modelId];
+    if (!policy) {
+      throw new ProviderError("client", `Unsupported image model '${requested}'.`);
     }
 
-    let lastError: Error | null = null;
+    const deadline = options.deadline ?? createDeadline();
+    let lastError: unknown = null;
 
-    for (const modelId of modelsToTry) {
+    for (let attempt = 0; attempt < policy.attempts; attempt++) {
+      if (attempt > 0 && deadline.remaining() < MIN_RETRY_BUDGET_MS) break;
       try {
-        console.log(`[NVIDIA] Dispatching generation request to model: ${modelId} (${width}x${height})...`);
-        const isSchnell = modelId.includes("schnell");
-        const isKlein = modelId.includes("klein");
-
-        const requestBody: Record<string, any> = {
-          prompt: sanitizedPrompt,
-          width,
-          height,
-        };
-
-        if (typeof options.seed === "number") {
-          requestBody.seed = options.seed;
-        }
-
-        if (isSchnell) {
-          requestBody.mode = "base";
-          requestBody.cfg_scale = 0;
-          requestBody.steps = 4;
-        } else if (isKlein) {
-          requestBody.steps = options.steps || 4;
-        } else {
-          // flux.1-dev
-          requestBody.mode = "base";
-          requestBody.cfg_scale = 3.5;
-          requestBody.steps = options.steps || Number(process.env.NVIDIA_IMAGE_STEPS) || 28;
-        }
-
-        const t0 = Date.now();
-        const response = await fetch(`https://ai.api.nvidia.com/v1/genai/black-forest-labs/${modelId}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          signal: AbortSignal.timeout(24000), // Enforce 24s timeout for Netlify serverless constraints
-          body: JSON.stringify(requestBody),
-        });
-
-        const elapsedMs = Date.now() - t0;
-        console.log(`[NVIDIA] Response status from ${modelId}: ${response.status} in ${elapsedMs}ms`);
-
-        if (!response.ok) {
-          const errText = await response.text();
-          console.warn(`[NVIDIA] Model ${modelId} returned HTTP ${response.status}:`, errText);
-          
-          // Safety or client parameter rejection - don't retry same model
-          if (response.status === 422 || errText.toLowerCase().includes("safety") || errText.toLowerCase().includes("filter")) {
-            const safetyErr = new Error("NVIDIA content safety filter flagged this prompt. Please adjust the prompt wording.");
-            (safetyErr as any).isSafetyViolation = true;
-            throw safetyErr;
-          }
-
-          if (response.status === 400) {
-            const clientErr = new Error(`NVIDIA rejected request parameters (400): ${errText.slice(0, 200)}`);
-            (clientErr as any).isClientError = true;
-            throw clientErr;
-          }
-
-          throw new Error(`NVIDIA model ${modelId} failed (${response.status}): ${errText.slice(0, 200)}`);
-        }
-
-        const resJson = (await response.json()) as any;
-        let base64Image: string | null = null;
-
-        if (resJson.artifacts && resJson.artifacts[0] && typeof resJson.artifacts[0].base64 === "string") {
-          base64Image = resJson.artifacts[0].base64;
-        } else if (typeof resJson.image === "string") {
-          base64Image = resJson.image;
-        } else if (resJson.data && resJson.data[0] && typeof resJson.data[0].b64_json === "string") {
-          base64Image = resJson.data[0].b64_json;
-        }
-
-        if (!base64Image) {
-          throw new Error(`NVIDIA model ${modelId} completed but returned no valid base64 image data.`);
-        }
-
-        // Check for black frame safety block
-        if (isLikelyFilteredImage(base64Image)) {
-          const safetyErr = new Error(
-            "NVIDIA's safety filter blocked this image — the prompt was flagged as explicit and returned a black frame. Please soften the prompt terms."
-          );
-          (safetyErr as any).isSafetyViolation = true;
-          throw safetyErr;
-        }
-
-        return {
-          image: base64Image,
-          sanitizedPrompt,
-          provider: this.id,
-          model: modelId,
-        };
+        return await this.callOnce(apiKey, modelId, sanitizedPrompt, dims, options, policy.capMs, deadline);
       } catch (err: any) {
-        if (err.isSafetyViolation || err.isClientError) {
-          // Re-throw immediately: safety violations and client errors should NEVER fall back or retry
-          throw err;
-        }
         lastError = err;
-        console.warn(`[NVIDIA] Generation attempt with ${modelId} failed:`, err.message);
+        if (!isRetryable(err)) throw err;
+        console.warn(`[NVIDIA] Attempt ${attempt + 1} with ${modelId} failed (${err.kind}): ${err.message}`);
+        if (err.kind === "rate_limited") {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
       }
     }
 
-    throw lastError || new Error("All configured NVIDIA FLUX image models failed to generate an image.");
+    throw lastError || new ProviderError("unavailable", "NVIDIA image generation failed.");
+  }
+
+  private async callOnce(
+    apiKey: string,
+    modelId: string,
+    prompt: string,
+    dims: { width: number; height: number },
+    options: ImageGenerationOptions,
+    capMs: number,
+    deadline: Deadline
+  ): Promise<ImageGenerationResult> {
+    const requestBody: Record<string, any> = { prompt, width: dims.width, height: dims.height };
+    if (typeof options.seed === "number") {
+      requestBody.seed = options.seed;
+    }
+    if (modelId.includes("klein")) {
+      requestBody.steps = options.steps || 4;
+    } else {
+      // flux.1-dev
+      requestBody.mode = "base";
+      requestBody.cfg_scale = 3.5;
+      requestBody.steps = options.steps || Number(process.env.NVIDIA_IMAGE_STEPS) || 28;
+    }
+
+    const t0 = Date.now();
+    let response: Response;
+    try {
+      response = await fetch(`https://ai.api.nvidia.com/v1/genai/black-forest-labs/${modelId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        // Leave 1.5s of the request budget for decoding and sending the response.
+        signal: deadline.signal(capMs, 1500),
+        body: JSON.stringify(requestBody),
+      });
+    } catch (err: any) {
+      if (isAbortError(err)) {
+        throw new ProviderError("timeout", "The image model took too long to respond. Please try again.");
+      }
+      throw new ProviderError("unavailable", "Could not reach the image provider. Please try again.");
+    }
+
+    const providerRequestId = response.headers.get("nvcf-reqid") || undefined;
+    console.log(
+      `[NVIDIA] ${modelId} ${dims.width}x${dims.height} -> ${response.status} in ${Date.now() - t0}ms (nvcf-reqid: ${providerRequestId ?? "n/a"})`
+    );
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      console.warn(`[NVIDIA] ${modelId} error body:`, errText.slice(0, 300));
+      const lower = errText.toLowerCase();
+
+      if (response.status === 401 || response.status === 403) {
+        throw new ProviderError("config", "The image provider rejected the server's API key.");
+      }
+      if (response.status === 429) {
+        throw new ProviderError("rate_limited", "The image provider is rate-limiting requests. Please wait a moment and try again.");
+      }
+      if (response.status === 422 || lower.includes("safety") || lower.includes("content filter")) {
+        throw new ProviderError("safety", "NVIDIA content safety filter flagged this prompt. Please adjust the prompt wording.");
+      }
+      if (response.status === 400 || response.status === 404) {
+        throw new ProviderError("client", "The image provider rejected the request parameters.");
+      }
+      throw new ProviderError("unavailable", "The image provider is temporarily unavailable. Please try again.");
+    }
+
+    let resJson: any;
+    try {
+      resJson = await response.json();
+    } catch (err: any) {
+      if (isAbortError(err)) {
+        throw new ProviderError("timeout", "The image model took too long to respond. Please try again.");
+      }
+      throw new ProviderError("unavailable", "The image provider returned an unreadable response.");
+    }
+
+    let base64Image: string | null = null;
+    if (typeof resJson?.artifacts?.[0]?.base64 === "string") {
+      base64Image = resJson.artifacts[0].base64;
+    } else if (typeof resJson?.image === "string") {
+      base64Image = resJson.image;
+    } else if (typeof resJson?.data?.[0]?.b64_json === "string") {
+      base64Image = resJson.data[0].b64_json;
+    }
+
+    if (!base64Image) {
+      throw new ProviderError("unavailable", "The image provider completed but returned no image data.");
+    }
+
+    // Check for black frame safety block
+    if (isLikelyFilteredImage(base64Image)) {
+      throw new ProviderError(
+        "safety",
+        "NVIDIA's safety filter blocked this image — the prompt was flagged and returned a black frame. Please soften the prompt terms."
+      );
+    }
+
+    return { image: base64Image, sanitizedPrompt: prompt, provider: this.id, model: modelId, providerRequestId };
   }
 }
